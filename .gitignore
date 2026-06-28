@@ -1,0 +1,37 @@
+# MATLAB temporary files
+*.asv
+*.m~
+*.autosave
+
+# Editor / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Generated outputs
+outputs/**/*.mat
+outputs/**/*.fig
+outputs/**/*.png
+outputs/**/*.csv
+outputs/**/*.txt
+
+# Codex/generated logs
+logs/codex/*.txt
+
+# Brainstorm / tutorial / raw data
+brainstorm_db/
+brainstorm3/
+sample_introduction/
+*.ds/
+
+# Neuroimaging / participant data
+*.fif
+*.ctf
+*.meg4
+*.res4
+*.mrk
+*.hc
+*.pos
+*.nii
+*.nii.gz
