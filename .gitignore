@@ -1,37 +1,84 @@
-# MATLAB temporary files
+# ==============================
+# OS / editor junk
+# ==============================
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# MATLAB autosave / temporary files
 *.asv
 *.m~
 *.autosave
 
-# Editor / OS files
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
 
+# ==============================
 # Generated outputs
+# ==============================
+outputs/
 outputs/**/*.mat
 outputs/**/*.fig
 outputs/**/*.png
 outputs/**/*.csv
 outputs/**/*.txt
 
-# Codex/generated logs
-logs/codex/*.txt
 
-# Brainstorm / tutorial / raw data
-brainstorm_db/
+# ==============================
+# Logs / local diagnostics
+# ==============================
+logs/
+temp/
+
+# Local machine-specific MATLAB startup helpers
+local_startup_toolboxes.m
+
+
+# ==============================
+# Brainstorm / FieldTrip / external toolboxes
+# ==============================
 brainstorm3/
+brainstorm_db/
+fieldtrip/
 sample_introduction/
-*.ds/
 
-# Neuroimaging / participant data
-*.fif
-*.ctf
+
+# ==============================
+# MEG / MRI / raw neuroimaging data
+# ==============================
+*.ds/
 *.meg4
 *.res4
-*.mrk
 *.hc
 *.pos
+*.eeg
+*.mrk
+*.infods
+*.newds
+*.fif
+*.fif.gz
+*.ctf
+*.edf
+*.bdf
 *.nii
 *.nii.gz
+*.mgz
+*.mgh
+
+
+# ==============================
+# Large local/generated MAT files
+# Do not globally ignore all *.mat because small test fixtures may later be useful.
+# Generated validation MAT files are ignored through outputs/.
+# ==============================
+
+
+# ==============================
+# Python helper cache, if scripts are used locally
+# ==============================
+__pycache__/
+*.pyc
+*.pyo

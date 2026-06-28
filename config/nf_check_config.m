@@ -105,6 +105,19 @@ if ~isscalar(RTConfig.Validation.Step1.StepSamples) || ...
     error('RTConfig.Validation.Step1.StepSamples must be a positive integer scalar.');
 end
 
+allowedReferenceStrideModes = {'dense','step'};
+if ~isfield(RTConfig.Validation.Step1, 'ReferenceStrideMode') || ...
+        isempty(RTConfig.Validation.Step1.ReferenceStrideMode)
+    RTConfig.Validation.Step1.ReferenceStrideMode = 'dense';
+end
+RTConfig.Validation.Step1.ReferenceStrideMode = lower(char(RTConfig.Validation.Step1.ReferenceStrideMode));
+if ~ismember(RTConfig.Validation.Step1.ReferenceStrideMode, allowedReferenceStrideModes)
+    error('Unknown ReferenceStrideMode: %s', RTConfig.Validation.Step1.ReferenceStrideMode);
+end
+if strcmp(RTConfig.Validation.Step1.ReferenceStrideMode, 'step')
+    RTConfig.Validation.Step1.ReferenceStepSamples = local_resolve_reference_step_samples(RTConfig);
+end
+
 allowedBrainstormModes = {'auto','skip','precomputed_filtered','bst_function','filter_spec','iir_self_test'};
 if ~isfield(RTConfig.Validation.Step1.Brainstorm, 'Mode') || ...
         ~ismember(RTConfig.Validation.Step1.Brainstorm.Mode, allowedBrainstormModes)
@@ -174,12 +187,21 @@ RTConfig = local_set_missing(RTConfig, {'Validation','Step1','EnableIIRSOSCompar
 RTConfig = local_set_missing(RTConfig, {'Validation','Step1','WindowSamples'}, RTConfig.PowerWindowSamples);
 RTConfig = local_set_missing(RTConfig, {'Validation','Step1','StepSamples'}, RTConfig.ChunkSamples);
 RTConfig = local_set_missing(RTConfig, {'Validation','Step1','MinCyclesAtLowFreq'}, 3);
+RTConfig = local_set_missing(RTConfig, {'Validation','Step1','ReferenceStrideMode'}, 'dense');
+RTConfig = local_set_missing(RTConfig, {'Validation','Step1','ReferenceStepSamples'}, RTConfig.ChunkSamples);
+RTConfig = local_set_missing(RTConfig, {'Validation','Step1','SaveDenseDebugReference'}, false);
 
 RTConfig = local_set_missing(RTConfig, {'Validation','Step1','FFT','UseWelchIfAvailable'}, true);
 RTConfig = local_set_missing(RTConfig, {'Validation','Step1','FFT','DemeanBeforeFFT'}, true);
 RTConfig = local_set_missing(RTConfig, {'Validation','Step1','FFT','Taper'}, 'hann');
 RTConfig = local_set_missing(RTConfig, {'Validation','Step1','FFT','NFFT'}, []);
 RTConfig = local_set_missing(RTConfig, {'Validation','Step1','FFT','ReferenceBands'}, [4 8; 8 12; 13 30]);
+
+RTConfig = local_set_missing(RTConfig, {'Validation','Step1','BandDetection','Enable'}, true);
+RTConfig = local_set_missing(RTConfig, {'Validation','Step1','BandDetection','SearchBand'}, [1 60]);
+RTConfig = local_set_missing(RTConfig, {'Validation','Step1','BandDetection','ReferenceBands'}, [4 8; 8 12; 13 30; 30 59]);
+
+RTConfig = local_set_missing(RTConfig, {'Validation','Step1','Controls','Enable'}, false);
 
 RTConfig = local_set_missing(RTConfig, {'Validation','Step1','Brainstorm','Mode'}, 'auto');
 RTConfig = local_set_missing(RTConfig, {'Validation','Step1','Brainstorm','RequireForPass'}, false);
@@ -206,4 +228,30 @@ if ~isfield(S, fieldName) || isempty(S.(fieldName)) || ~isstruct(S.(fieldName))
     S.(fieldName) = struct();
 end
 S.(fieldName) = local_set_missing(S.(fieldName), path(2:end), value);
+end
+
+function stepSamples = local_resolve_reference_step_samples(RTConfig)
+% Resolve stepped-reference stride with backward-compatible fallbacks.
+stepSamples = [];
+if isfield(RTConfig.Validation.Step1, 'ReferenceStepSamples') && ...
+        local_is_positive_integer_scalar(RTConfig.Validation.Step1.ReferenceStepSamples)
+    stepSamples = RTConfig.Validation.Step1.ReferenceStepSamples;
+elseif isfield(RTConfig.Validation.Step1, 'StepSamples') && ...
+        local_is_positive_integer_scalar(RTConfig.Validation.Step1.StepSamples)
+    stepSamples = RTConfig.Validation.Step1.StepSamples;
+elseif isfield(RTConfig, 'ChunkSamples') && local_is_positive_integer_scalar(RTConfig.ChunkSamples)
+    stepSamples = RTConfig.ChunkSamples;
+else
+    stepSamples = 1;
+end
+
+stepSamples = round(stepSamples);
+if stepSamples < 1
+    error('RTConfig.Validation.Step1.ReferenceStepSamples must resolve to at least 1.');
+end
+end
+
+function tf = local_is_positive_integer_scalar(x)
+% Check positive integer scalar settings without throwing.
+tf = isnumeric(x) && isscalar(x) && isfinite(x) && x >= 1 && x == round(x);
 end
