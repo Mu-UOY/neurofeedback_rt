@@ -29,8 +29,8 @@ switch Filter.Type
         Filter.a = 1;
         Filter.zi = zeros(0, NSignals);
         Filter.AnalyticGroupDelaySamples = 0;
-        Filter.EmpiricalDelaySamples = NaN;
-        Filter.DelayCorrectionUsed = 0;
+        Filter.EmpiricalDelaySamples = local_empirical_delay(RTConfig);
+        Filter.DelayCorrectionUsed = local_delay_correction(RTConfig, 0);
         Filter.DiscardInitialSamples = local_discard_samples(RTConfig, 0);
 
     case 'iir_sos'
@@ -63,7 +63,7 @@ switch Filter.Type
         Filter.SOS = sos;
         Filter.G = g;
         Filter.AnalyticGroupDelaySamples = NaN;
-        Filter.EmpiricalDelaySamples = NaN;
+        Filter.EmpiricalDelaySamples = local_empirical_delay(RTConfig);
         Filter.DelayCorrectionUsed = local_delay_correction(RTConfig, 0);
         Filter.DiscardInitialSamples = local_discard_samples( ...
             RTConfig, max(RTConfig.Fs, RTConfig.PowerWindowSamples));
@@ -85,7 +85,7 @@ switch Filter.Type
 
         % Linear-phase FIR group delay is half the filter order.
         Filter.AnalyticGroupDelaySamples = (length(Filter.b) - 1) / 2;
-        Filter.EmpiricalDelaySamples = NaN;
+        Filter.EmpiricalDelaySamples = local_empirical_delay(RTConfig);
         Filter.DelayCorrectionUsed = local_delay_correction(RTConfig, Filter.AnalyticGroupDelaySamples);
         Filter.DiscardInitialSamples = local_discard_samples( ...
             RTConfig, ceil(3 * Filter.AnalyticGroupDelaySamples));
@@ -101,6 +101,16 @@ end
 Filter.WarmupComplete = Filter.DiscardInitialSamples == 0;
 Filter.SamplesProcessed = 0;
 
+end
+
+function delay = local_empirical_delay(RTConfig)
+% Read empirical-delay metadata without forcing it to equal correction delay.
+delay = NaN;
+if isfield(RTConfig.Filter, 'EmpiricalDelaySamples') && ...
+        ~isempty(RTConfig.Filter.EmpiricalDelaySamples) && ...
+        isfinite(RTConfig.Filter.EmpiricalDelaySamples)
+    delay = RTConfig.Filter.EmpiricalDelaySamples;
+end
 end
 
 function discard = local_discard_samples(RTConfig, defaultValue)

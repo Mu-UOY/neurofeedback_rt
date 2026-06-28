@@ -25,7 +25,7 @@ for i = 1:numel(required)
 end
 
 %% ===== FILL DEFENSIVE DEFAULTS =====
-% Step 1 fields may be missing from configs saved before this layer existed.
+% Optional fields may be missing from configs saved before this layer existed.
 RTConfig = local_fill_step1_defaults(RTConfig);
 
 %% ===== CHECK TIMING PARAMETERS =====
@@ -92,6 +92,16 @@ if strcmp(RTConfig.Filter.Type, 'brainstorm_fir')
     end
 end
 
+% Empirical and explicit delay-correction fields are optional scalar metadata.
+if isfield(RTConfig.Filter, 'EmpiricalDelaySamples') && ...
+        ~local_is_empty_nan_or_finite_scalar(RTConfig.Filter.EmpiricalDelaySamples)
+    error('RTConfig.Filter.EmpiricalDelaySamples must be empty, NaN, or a finite numeric scalar.');
+end
+if isfield(RTConfig.Filter, 'DelayCorrectionUsed') && ...
+        ~local_is_empty_nan_or_finite_scalar(RTConfig.Filter.DelayCorrectionUsed)
+    error('RTConfig.Filter.DelayCorrectionUsed must be empty, NaN, or a finite numeric scalar.');
+end
+
 %% ===== CHECK STEP 1 VALIDATION CONFIGURATION =====
 % Offline scientific checks are optional but must have valid local settings.
 if ~isscalar(RTConfig.Validation.Step1.WindowSamples) || ...
@@ -123,6 +133,35 @@ if ~isfield(RTConfig.Validation.Step1.Brainstorm, 'Mode') || ...
         ~ismember(RTConfig.Validation.Step1.Brainstorm.Mode, allowedBrainstormModes)
     error('RTConfig.Validation.Step1.Brainstorm.Mode must be one of: %s.', ...
         strjoin(allowedBrainstormModes, ', '));
+end
+
+%% ===== CHECK SIMULATION CONFIGURATION =====
+% Dropped-chunk simulation can be deterministic or probabilistic.
+if ~isfield(RTConfig, 'Simulation') || ~isstruct(RTConfig.Simulation)
+    error('RTConfig.Simulation must be a struct.');
+end
+if ~islogical(RTConfig.Simulation.EnableDroppedChunks) && ...
+        ~(isnumeric(RTConfig.Simulation.EnableDroppedChunks) && isscalar(RTConfig.Simulation.EnableDroppedChunks))
+    error('RTConfig.Simulation.EnableDroppedChunks must be a scalar logical or numeric flag.');
+end
+if ~isscalar(RTConfig.Simulation.DropProbability) || ~isnumeric(RTConfig.Simulation.DropProbability) || ...
+        ~isfinite(RTConfig.Simulation.DropProbability) || RTConfig.Simulation.DropProbability < 0 || ...
+        RTConfig.Simulation.DropProbability > 1
+    error('RTConfig.Simulation.DropProbability must be a finite scalar between 0 and 1.');
+end
+if ~isempty(RTConfig.Simulation.DropChunkIndices)
+    dropIdx = RTConfig.Simulation.DropChunkIndices;
+    if ~isnumeric(dropIdx) || ~isvector(dropIdx) || any(~isfinite(dropIdx(:))) || ...
+            any(dropIdx(:) < 1) || any(dropIdx(:) ~= round(dropIdx(:)))
+        error('RTConfig.Simulation.DropChunkIndices must be empty or a vector of positive integer values.');
+    end
+end
+if ~isempty(RTConfig.Simulation.RandomSeed)
+    seed = RTConfig.Simulation.RandomSeed;
+    if ~isnumeric(seed) || ~isscalar(seed) || ~isfinite(seed) || ...
+            seed ~= round(seed) || seed < 0
+        error('RTConfig.Simulation.RandomSeed must be empty or a finite nonnegative scalar integer.');
+    end
 end
 
 %% ===== CHECK SOURCE CONFIGURATION =====
@@ -181,6 +220,19 @@ end
 if ~isfield(RTConfig, 'Brainstorm') || isempty(RTConfig.Brainstorm)
     RTConfig.Brainstorm = struct();
 end
+if ~isfield(RTConfig, 'Simulation') || isempty(RTConfig.Simulation)
+    RTConfig.Simulation = struct();
+end
+
+RTConfig = local_set_missing(RTConfig, {'Filter','EmpiricalDelaySamples'}, NaN);
+RTConfig = local_set_missing(RTConfig, {'Filter','DelayCorrectionUsed'}, NaN);
+
+RTConfig = local_set_missing(RTConfig, {'Simulation','EnableDroppedChunks'}, false);
+RTConfig = local_set_missing(RTConfig, {'Simulation','DropProbability'}, 0);
+RTConfig = local_set_missing(RTConfig, {'Simulation','DropChunkIndices'}, []);
+RTConfig = local_set_missing(RTConfig, {'Simulation','RandomSeed'}, []);
+RTConfig = local_set_missing(RTConfig, {'Simulation','EnableJitter'}, false);
+RTConfig = local_set_missing(RTConfig, {'Simulation','MaxJitterSamples'}, 0);
 
 RTConfig = local_set_missing(RTConfig, {'Validation','Step1','EnableFFTComparison'}, true);
 RTConfig = local_set_missing(RTConfig, {'Validation','Step1','EnableIIRSOSComparison'}, true);
@@ -254,4 +306,15 @@ end
 function tf = local_is_positive_integer_scalar(x)
 % Check positive integer scalar settings without throwing.
 tf = isnumeric(x) && isscalar(x) && isfinite(x) && x >= 1 && x == round(x);
+end
+
+function tf = local_is_empty_nan_or_finite_scalar(x)
+% Validate optional scalar delay fields.
+if isempty(x)
+    tf = true;
+elseif isnumeric(x) && isscalar(x) && (isnan(x) || isfinite(x))
+    tf = true;
+else
+    tf = false;
+end
 end

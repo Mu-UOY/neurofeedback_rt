@@ -34,15 +34,27 @@ Inputs.PowerWindowSamples = RTConfig.PowerWindowSamples;
 Inputs.BufferSamples = RTConfig.BufferSamples;
 Inputs.TargetBand = RTConfig.TargetBand;
 Inputs.FilterType = RTConfig.Filter.Type;
+Inputs.FilterOrder = local_get_nested(RTConfig, {'Filter','Order'}, []);
 Inputs.FilterHash = RT.Hash.FilterHash;
 Inputs.FilterDiscardInitialSamples = RT.Filter.DiscardInitialSamples;
+Inputs.FilterEmpiricalDelaySamples = local_getfield_default(RT.Filter, 'EmpiricalDelaySamples', NaN);
+Inputs.FilterAnalyticGroupDelaySamples = local_getfield_default(RT.Filter, 'AnalyticGroupDelaySamples', NaN);
 Inputs.FilterDelayCorrectionUsed = RT.Filter.DelayCorrectionUsed;
 Inputs.SpatialMode = RTConfig.Spatial.Mode;
 Inputs.SpatialHash = RT.Hash.SpatialHash;
 Inputs.SpatialNChannels = RT.Spatial.NChannels;
+Inputs.ExpectedChannelNames = local_get_nested(RTConfig, {'Spatial','ExpectedChannelNames'}, {});
 Inputs.ZScoreClipRange = RTConfig.ZScore.ClipRange;
 Inputs.ZScoreSmoothAlpha = RTConfig.ZScore.SmoothAlpha;
 Inputs.SourceMode = RTConfig.Source.Mode;
+Inputs.BrainstormVersion = local_get_nested(RTConfig, {'Brainstorm','Version'}, '');
+Inputs.BrainstormFilterSpecPath = local_get_nested(RTConfig, {'Brainstorm','FilterSpecPath'}, '');
+Inputs.ValidationAlignmentSampleField = local_get_nested(RTConfig, {'Validation','AlignmentSampleField'}, '');
+Inputs.SyncSampleIndexTolerance = local_get_nested(RTConfig, {'Sync','SampleIndexTolerance'}, 0);
+Inputs.SimulationEnableDroppedChunks = local_get_nested(RTConfig, {'Simulation','EnableDroppedChunks'}, false);
+Inputs.SimulationDropProbability = local_get_nested(RTConfig, {'Simulation','DropProbability'}, 0);
+Inputs.SimulationDropChunkIndices = local_get_nested(RTConfig, {'Simulation','DropChunkIndices'}, []);
+Inputs.SimulationRandomSeed = local_get_nested(RTConfig, {'Simulation','RandomSeed'}, []);
 
 %% ===== COMPUTE CONFIG HASH =====
 % Sorted serialization keeps the fingerprint deterministic across runs.
@@ -50,6 +62,28 @@ hashString = local_serialize_struct_sorted(Inputs);
 RT.ConfigHash = local_string_hash(hashString);
 RT.ConfigHashInputs = Inputs;
 
+end
+
+function value = local_get_nested(S, path, defaultValue)
+% Read a nested config value without requiring newer fields to exist.
+value = defaultValue;
+current = S;
+for iPath = 1:numel(path)
+    if ~isstruct(current) || ~isfield(current, path{iPath})
+        return;
+    end
+    current = current.(path{iPath});
+end
+value = current;
+end
+
+function value = local_getfield_default(S, fieldName, defaultValue)
+% Read a struct field with a safe fallback.
+if isstruct(S) && isfield(S, fieldName)
+    value = S.(fieldName);
+else
+    value = defaultValue;
+end
 end
 
 function hash = local_numeric_hash(x)
