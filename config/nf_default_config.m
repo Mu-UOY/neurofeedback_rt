@@ -103,6 +103,9 @@ RTConfig.Validation.Step1.EnableIIRSOSComparison = true;
 RTConfig.Validation.Step1.WindowSamples = RTConfig.PowerWindowSamples;
 RTConfig.Validation.Step1.StepSamples = RTConfig.ChunkSamples;
 RTConfig.Validation.Step1.MinCyclesAtLowFreq = 3;
+RTConfig.Validation.Step1.ReferenceStrideMode = 'dense';
+RTConfig.Validation.Step1.ReferenceStepSamples = RTConfig.ChunkSamples;
+RTConfig.Validation.Step1.SaveDenseDebugReference = false;
 
 RTConfig.Validation.Step1.FFT.UseWelchIfAvailable = true;
 RTConfig.Validation.Step1.FFT.DemeanBeforeFFT = true;
@@ -113,6 +116,17 @@ RTConfig.Validation.Step1.FFT.ReferenceBands = [
     8 12
     13 30
 ];
+
+RTConfig.Validation.Step1.BandDetection.Enable = true;
+RTConfig.Validation.Step1.BandDetection.SearchBand = [1 60];
+RTConfig.Validation.Step1.BandDetection.ReferenceBands = [
+    4 8
+    8 12
+    13 30
+    30 59
+];
+
+RTConfig.Validation.Step1.Controls.Enable = false;
 
 RTConfig.Validation.Step1.Brainstorm.Mode = 'auto';
 RTConfig.Validation.Step1.Brainstorm.RequireForPass = false;

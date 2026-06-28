@@ -51,13 +51,33 @@ switch Filter.Type
         error('Unknown filter type: %s', Filter.Type);
 end
 
-%% ===== PREALLOCATE REFERENCE =====
-% One reference point is produced for each complete sliding window.
+%% ===== RESOLVE REFERENCE WINDOWS =====
+% One reference point is produced for each configured complete window.
 W = RTConfig.PowerWindowSamples;
 discard = Filter.DiscardInitialSamples;
 nSamples = size(Xf, 2);
-nWindows = max(0, nSamples - W + 1);
+[referenceStrideMode, referenceStepSamples] = local_reference_stride_settings(RTConfig);
 
+firstWindowEnd = W;
+lastWindowEnd = nSamples;
+if lastWindowEnd < firstWindowEnd
+    windowEnds = [];
+else
+    switch referenceStrideMode
+        case 'dense'
+            windowEnds = firstWindowEnd:lastWindowEnd;
+
+        case 'step'
+            windowEnds = firstWindowEnd:referenceStepSamples:lastWindowEnd;
+
+        otherwise
+            error('Unknown ReferenceStrideMode: %s', referenceStrideMode);
+    end
+end
+nWindows = numel(windowEnds);
+
+%% ===== PREALLOCATE REFERENCE =====
+% Store both center and end samples so alignment and chunk diagnostics are explicit.
 Ref = struct();
 Ref.Power = NaN(1, nWindows);
 Ref.PowerPerSignal = NaN(NSignals, nWindows);
@@ -69,8 +89,8 @@ Ref.IsValid = false(1, nWindows);
 %% ===== COMPUTE WINDOWED POWER =====
 % Windows starting during filter warmup remain invalid.
 for iWindow = 1:nWindows
-    windowStart = iWindow;
-    windowEnd = iWindow + W - 1;
+    windowEnd = windowEnds(iWindow);
+    windowStart = windowEnd - W + 1;
     windowCenter = windowStart + floor(W / 2);
 
     Ref.WindowStartSample(iWindow) = windowStart;
@@ -89,7 +109,9 @@ for iWindow = 1:nWindows
 end
 
 %% ===== PACKAGE REFERENCE METADATA =====
-% SampleIndex mirrors the uncorrected window center for direct comparison.
+% Ref.SampleIndex is the uncorrected window center sample for backward
+% compatibility and direct comparison with Measure.WindowCenterSample.
+% WindowEndSample is stored separately for chunk-boundary diagnostics.
 Ref.SampleIndex = Ref.WindowCenterSample;
 Ref.Time = Ref.WindowCenterSample ./ Data.Fs;
 Ref.Fs = Data.Fs;
@@ -117,5 +139,61 @@ else
     Ref.Events = [];
 end
 Ref.Metadata.CreatedAt = char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss'));
+Ref.Metadata.ReferenceStrideMode = referenceStrideMode;
+Ref.Metadata.ReferenceStepSamples = referenceStepSamples;
+Ref.Metadata.WindowCount = nWindows;
+Ref.Metadata.DenseEquivalentAvailable = strcmp(referenceStrideMode, 'dense');
+Ref.Metadata.PowerWindowSamples = W;
+Ref.Metadata.ChunkSamples = RTConfig.ChunkSamples;
 
+end
+
+function [strideMode, stepSamples] = local_reference_stride_settings(RTConfig)
+% Resolve dense versus stepped reference generation.
+strideMode = 'dense';
+if isfield(RTConfig, 'Validation') && isfield(RTConfig.Validation, 'Step1') && ...
+        isfield(RTConfig.Validation.Step1, 'ReferenceStrideMode') && ...
+        ~isempty(RTConfig.Validation.Step1.ReferenceStrideMode)
+    strideMode = lower(char(RTConfig.Validation.Step1.ReferenceStrideMode));
+end
+
+switch strideMode
+    case 'dense'
+        stepSamples = 1;
+
+    case 'step'
+        stepSamples = local_resolve_reference_step_samples(RTConfig);
+
+    otherwise
+        error('Unknown ReferenceStrideMode: %s', strideMode);
+end
+end
+
+function stepSamples = local_resolve_reference_step_samples(RTConfig)
+% Read stepped-reference stride with documented fallbacks.
+stepSamples = [];
+if isfield(RTConfig, 'Validation') && isfield(RTConfig.Validation, 'Step1')
+    step1 = RTConfig.Validation.Step1;
+    if isfield(step1, 'ReferenceStepSamples') && local_is_positive_scalar(step1.ReferenceStepSamples)
+        stepSamples = step1.ReferenceStepSamples;
+    elseif isfield(step1, 'StepSamples') && local_is_positive_scalar(step1.StepSamples)
+        stepSamples = step1.StepSamples;
+    end
+end
+if isempty(stepSamples) && isfield(RTConfig, 'ChunkSamples') && local_is_positive_scalar(RTConfig.ChunkSamples)
+    stepSamples = RTConfig.ChunkSamples;
+end
+if isempty(stepSamples)
+    stepSamples = 1;
+end
+
+stepSamples = round(stepSamples);
+if stepSamples < 1
+    error('RTConfig.Validation.Step1.ReferenceStepSamples must resolve to at least 1.');
+end
+end
+
+function tf = local_is_positive_scalar(x)
+% Check positive finite scalar stride values without throwing.
+tf = isnumeric(x) && isscalar(x) && isfinite(x) && x >= 1;
 end

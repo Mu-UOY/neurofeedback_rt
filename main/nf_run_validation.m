@@ -169,7 +169,8 @@ DelayResults = nf_validate_empirical_filter_delay(Ref, Measures, RTConfig);
 CompareResults = nf_validate_brainstorm_vs_streaming(Ref, Measures, RTConfig);
 
 % Summarize whether target-band power was produced.
-BandResults = nf_validate_band_detection(Data, Ref, Measures, RTConfig);
+BandResults = nf_validate_band_detection(Data, Ref, Measures, RTConfig, Step1Results.FFT);
+Step1Results.BandDetection = BandResults;
 
 % Check whether processing time is compatible with real-time use.
 RuntimeResults = nf_validate_filter_runtime(RT.Timing.ChunkProcessingTimes, RTConfig);
@@ -209,6 +210,7 @@ end
 fprintf('  Runtime status:   %s\n', RuntimeResults.Status);
 fprintf('  Step 1 FFT:       %s\n', Results.Step1.FFT.Status);
 fprintf('  Step 1 IIR/SOS:   %s\n', Results.Step1.IIRSOSComparison.Status);
+fprintf('  Band detection:   %s\n', Results.Step1.BandDetection.Status);
 if isfield(Results.Step1.IIRSOSComparison, 'Compare') && ...
         isfield(Results.Step1.IIRSOSComparison.Compare, 'ZCorrelation') && ...
         isfinite(Results.Step1.IIRSOSComparison.Compare.ZCorrelation)
