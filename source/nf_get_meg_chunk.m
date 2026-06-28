@@ -26,18 +26,34 @@ if Source.CurrentSample > Source.EndSample
 end
 
 %% ===== SIMULATE DROPPED CHUNKS =====
-% Drop simulation advances the cursor by whole chunks before reading data.
+% Drop simulation advances over one or more whole chunks before reading data.
 dropCount = 0;
-while Source.SimDrop.Enabled && Source.CurrentSample <= Source.EndSample && ...
-        rand < Source.SimDrop.Probability
-    Source.CurrentSample = Source.CurrentSample + Source.ChunkSamples;
+dropSamples = 0;
+while Source.SimDrop.Enabled && Source.CurrentSample <= Source.EndSample
+    Source.ChunkCounter = Source.ChunkCounter + 1;
+
+    shouldDrop = local_should_drop_chunk(Source);
+    if ~shouldDrop
+        break;
+    end
+
+    dropStart = Source.CurrentSample;
+    dropStop = min(dropStart + Source.ChunkSamples - 1, Source.EndSample);
+    Source.CurrentSample = dropStop + 1;
     dropCount = dropCount + 1;
+    dropSamples = dropSamples + dropStop - dropStart + 1;
 end
 Source.LastDroppedChunks = dropCount;
+Source.LastDroppedSamples = dropSamples;
 
 % If dropping consumed the remaining samples, return empty.
 if Source.CurrentSample > Source.EndSample
     return;
+end
+
+% When drop simulation is disabled, still count the emitted chunk.
+if ~Source.SimDrop.Enabled
+    Source.ChunkCounter = Source.ChunkCounter + 1;
 end
 
 %% ===== SELECT CHUNK RANGE =====
@@ -58,6 +74,8 @@ chunk.SourceMode = Source.Mode;
 chunk.GapBeforeChunkFlag = dropCount > 0;
 chunk.SimulatedDropFlag = dropCount > 0;
 chunk.DroppedChunkFlag = false;
+chunk.SimulatedDroppedChunks = dropCount;
+chunk.SimulatedDroppedSamples = dropSamples;
 
 %% ===== ADVANCE SOURCE CURSOR =====
 % The next call starts immediately after this chunk.
@@ -78,4 +96,14 @@ if isfield(RTConfig.Simulation, 'EnableJitter') && RTConfig.Simulation.EnableJit
     warning('Simulation jitter is declared in RTConfig but not implemented in the first code version.');
 end
 
+end
+
+function shouldDrop = local_should_drop_chunk(Source)
+% Deterministic schedules take priority over probabilistic drops.
+if isfield(Source.SimDrop, 'DropChunkIndices') && ~isempty(Source.SimDrop.DropChunkIndices)
+    shouldDrop = any(Source.SimDrop.DropChunkIndices == Source.ChunkCounter);
+    return;
+end
+
+shouldDrop = rand < Source.SimDrop.Probability;
 end

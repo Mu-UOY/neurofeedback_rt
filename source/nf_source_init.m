@@ -64,6 +64,7 @@ Source.StartSample = SourceStartSample;
 Source.EndSample = SourceEndSample;
 Source.CurrentSample = Source.StartSample;
 Source.ChunkSamples = RTConfig.ChunkSamples;
+Source.ChunkCounter = 0;
 
 %% ===== COPY CHANNEL NAMES =====
 % Missing labels get deterministic CH001-style names.
@@ -77,7 +78,24 @@ end
 % Drop settings are consumed by nf_get_meg_chunk.
 Source.SimDrop.Enabled = RTConfig.Simulation.EnableDroppedChunks;
 Source.SimDrop.Probability = RTConfig.Simulation.DropProbability;
+if isfield(RTConfig.Simulation, 'DropChunkIndices') && Source.SimDrop.Enabled
+    Source.SimDrop.DropChunkIndices = unique(round(RTConfig.Simulation.DropChunkIndices(:)'));
+else
+    Source.SimDrop.DropChunkIndices = [];
+end
+if isfield(RTConfig.Simulation, 'RandomSeed')
+    Source.SimDrop.RandomSeed = RTConfig.Simulation.RandomSeed;
+else
+    Source.SimDrop.RandomSeed = [];
+end
 Source.LastDroppedChunks = 0;
+Source.LastDroppedSamples = 0;
+
+% Seed probabilistic simulation when requested. Scheduled drops are unaffected.
+if Source.SimDrop.Enabled && ~isempty(Source.SimDrop.RandomSeed) && ...
+        isfinite(Source.SimDrop.RandomSeed)
+    rng(Source.SimDrop.RandomSeed);
+end
 
 end
 

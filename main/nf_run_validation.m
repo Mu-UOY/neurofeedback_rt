@@ -175,6 +175,9 @@ Step1Results.BandDetection = BandResults;
 % Check whether processing time is compatible with real-time use.
 RuntimeResults = nf_validate_filter_runtime(RT.Timing.ChunkProcessingTimes, RTConfig);
 
+% Summarize dropped-chunk and gap-contaminated Measure behavior.
+DroppedChunkResults = nf_validate_dropped_chunk_behavior(Measures, RTConfig);
+
 
 %% ===== PACKAGE RESULTS =====
 Results = struct();
@@ -183,6 +186,7 @@ Results.Delay = DelayResults;
 Results.Compare = CompareResults;
 Results.Band = BandResults;
 Results.Runtime = RuntimeResults;
+Results.DroppedChunks = DroppedChunkResults;
 Results.Step1 = Step1Results;
 
 Results.NChunks = measureCount;
@@ -208,6 +212,7 @@ else
 end
 
 fprintf('  Runtime status:   %s\n', RuntimeResults.Status);
+fprintf('  Dropped chunks:   %s\n', DroppedChunkResults.Status);
 fprintf('  Step 1 FFT:       %s\n', Results.Step1.FFT.Status);
 fprintf('  Step 1 IIR/SOS:   %s\n', Results.Step1.IIRSOSComparison.Status);
 fprintf('  Band detection:   %s\n', Results.Step1.BandDetection.Status);

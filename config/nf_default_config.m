@@ -44,6 +44,8 @@ RTConfig.Source.EndSample = Inf;
 % Dropped-chunk and jitter simulation are disabled by default.
 RTConfig.Simulation.EnableDroppedChunks = false;
 RTConfig.Simulation.DropProbability = 0;
+RTConfig.Simulation.DropChunkIndices = [];
+RTConfig.Simulation.RandomSeed = [];
 RTConfig.Simulation.EnableJitter = false;
 RTConfig.Simulation.MaxJitterSamples = 0;
 
