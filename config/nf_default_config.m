@@ -79,6 +79,27 @@ RTConfig.Feedback.UpdateEveryNValidMeasures = 1;
 RTConfig.Feedback.MapSource = 'ZSmoothed';
 RTConfig.Feedback.ClipRange = [-5 5];
 
+%% ===== ANALYSIS DEFAULTS =====
+% Step 2C analysis defaults are noninteractive and save artifacts by default.
+RTConfig.Analysis.DisplayMode = 'off';
+RTConfig.Analysis.ReportRoot = fullfile('outputs', 'reports');
+RTConfig.Analysis.SaveFigures = true;
+RTConfig.Analysis.SaveTables = true;
+RTConfig.Analysis.SaveMat = true;
+RTConfig.Analysis.FastMode = false;
+RTConfig.Analysis.MinThetaOnMinusOffZ = 0.5;
+RTConfig.Analysis.MaxWrongBandMeanZ = 1.0;
+
+%% ===== SESSION METADATA DEFAULTS =====
+% Metadata labels are optional audit fields and may remain empty.
+RTConfig.SessionMetadata.RunID = '';
+RTConfig.SessionMetadata.DatasetName = '';
+RTConfig.SessionMetadata.SubjectID = '';
+RTConfig.SessionMetadata.SessionID = '';
+RTConfig.SessionMetadata.TrialID = '';
+RTConfig.SessionMetadata.StrategyLabel = '';
+RTConfig.SessionMetadata.ConditionLabel = '';
+
 %% ===== DEBUG DEFAULTS =====
 % Schema checks favor early failures during first-version development.
 RTConfig.Debug.CheckMeasureSchema = true;

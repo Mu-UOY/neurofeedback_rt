@@ -251,6 +251,23 @@ if ~isnumeric(RTConfig.Feedback.ClipRange) || numel(RTConfig.Feedback.ClipRange)
     error('RTConfig.Feedback.ClipRange must be [low high] with low < high.');
 end
 
+%% ===== CHECK ANALYSIS CONFIGURATION =====
+% Step 2C analysis runs are noninteractive unless explicitly requested.
+if ~isfield(RTConfig, 'Analysis') || ~isstruct(RTConfig.Analysis)
+    error('RTConfig.Analysis must be a struct.');
+end
+allowedDisplayModes = {'off','interactive'};
+if ~isfield(RTConfig.Analysis, 'DisplayMode') || ...
+        ~ismember(char(RTConfig.Analysis.DisplayMode), allowedDisplayModes)
+    error('RTConfig.Analysis.DisplayMode must be one of: %s.', strjoin(allowedDisplayModes, ', '));
+end
+
+%% ===== CHECK SESSION METADATA =====
+% Metadata fields may be empty, but the section should exist for audit code.
+if ~isfield(RTConfig, 'SessionMetadata') || ~isstruct(RTConfig.SessionMetadata)
+    error('RTConfig.SessionMetadata must be a struct.');
+end
+
 %% ===== ENSURE OUTPUT PATHS =====
 % Create configured output folders so later save operations do not fail.
 pathFields = {'OutputDir','ValidationDir','BaselinesDir','TrialsDir'};
@@ -286,6 +303,12 @@ end
 if ~isfield(RTConfig, 'Feedback') || isempty(RTConfig.Feedback)
     RTConfig.Feedback = struct();
 end
+if ~isfield(RTConfig, 'Analysis') || isempty(RTConfig.Analysis)
+    RTConfig.Analysis = struct();
+end
+if ~isfield(RTConfig, 'SessionMetadata') || isempty(RTConfig.SessionMetadata)
+    RTConfig.SessionMetadata = struct();
+end
 
 RTConfig = local_set_missing(RTConfig, {'Filter','EmpiricalDelaySamples'}, NaN);
 RTConfig = local_set_missing(RTConfig, {'Filter','DelayCorrectionUsed'}, NaN);
@@ -309,6 +332,23 @@ RTConfig = local_set_missing(RTConfig, {'Feedback','Mode'}, 'none');
 RTConfig = local_set_missing(RTConfig, {'Feedback','UpdateEveryNValidMeasures'}, 1);
 RTConfig = local_set_missing(RTConfig, {'Feedback','MapSource'}, 'ZSmoothed');
 RTConfig = local_set_missing(RTConfig, {'Feedback','ClipRange'}, [-5 5]);
+
+RTConfig = local_set_missing(RTConfig, {'Analysis','DisplayMode'}, 'off');
+RTConfig = local_set_missing(RTConfig, {'Analysis','ReportRoot'}, fullfile('outputs', 'reports'));
+RTConfig = local_set_missing(RTConfig, {'Analysis','SaveFigures'}, true);
+RTConfig = local_set_missing(RTConfig, {'Analysis','SaveTables'}, true);
+RTConfig = local_set_missing(RTConfig, {'Analysis','SaveMat'}, true);
+RTConfig = local_set_missing(RTConfig, {'Analysis','FastMode'}, false);
+RTConfig = local_set_missing(RTConfig, {'Analysis','MinThetaOnMinusOffZ'}, 0.5);
+RTConfig = local_set_missing(RTConfig, {'Analysis','MaxWrongBandMeanZ'}, 1.0);
+
+RTConfig = local_set_missing(RTConfig, {'SessionMetadata','RunID'}, '');
+RTConfig = local_set_missing(RTConfig, {'SessionMetadata','DatasetName'}, '');
+RTConfig = local_set_missing(RTConfig, {'SessionMetadata','SubjectID'}, '');
+RTConfig = local_set_missing(RTConfig, {'SessionMetadata','SessionID'}, '');
+RTConfig = local_set_missing(RTConfig, {'SessionMetadata','TrialID'}, '');
+RTConfig = local_set_missing(RTConfig, {'SessionMetadata','StrategyLabel'}, '');
+RTConfig = local_set_missing(RTConfig, {'SessionMetadata','ConditionLabel'}, '');
 
 RTConfig = local_set_missing(RTConfig, {'Validation','Step1','EnableFFTComparison'}, true);
 RTConfig = local_set_missing(RTConfig, {'Validation','Step1','EnableIIRSOSComparison'}, true);
