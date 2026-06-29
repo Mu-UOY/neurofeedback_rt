@@ -194,6 +194,63 @@ if ~isscalar(RTConfig.ZScore.SmoothAlpha) || RTConfig.ZScore.SmoothAlpha < 0 || 
     error('RTConfig.ZScore.SmoothAlpha must satisfy 0 <= alpha < 1.');
 end
 
+%% ===== CHECK BASELINE CONFIGURATION =====
+% Simulated resting/trial uses finalized baselines for z-scoring.
+if ~isfield(RTConfig, 'Baseline') || ~isstruct(RTConfig.Baseline)
+    error('RTConfig.Baseline must be a struct.');
+end
+if ~isscalar(RTConfig.Baseline.MinValidWindows) || ~isnumeric(RTConfig.Baseline.MinValidWindows) || ...
+        ~isfinite(RTConfig.Baseline.MinValidWindows) || RTConfig.Baseline.MinValidWindows < 1 || ...
+        RTConfig.Baseline.MinValidWindows ~= round(RTConfig.Baseline.MinValidWindows)
+    error('RTConfig.Baseline.MinValidWindows must be a positive integer scalar.');
+end
+allowedOutlierMethods = {'none','percentile','zscore'};
+if ~isfield(RTConfig.Baseline, 'OutlierMethod') || ...
+        ~ismember(char(RTConfig.Baseline.OutlierMethod), allowedOutlierMethods)
+    error('RTConfig.Baseline.OutlierMethod must be one of: %s.', strjoin(allowedOutlierMethods, ', '));
+end
+lowPct = RTConfig.Baseline.OutlierPercentileLow;
+highPct = RTConfig.Baseline.OutlierPercentileHigh;
+if ~isscalar(lowPct) || ~isscalar(highPct) || ~isnumeric(lowPct) || ~isnumeric(highPct) || ...
+        ~isfinite(lowPct) || ~isfinite(highPct) || lowPct < 0 || highPct > 100 || lowPct >= highPct
+    error('RTConfig.Baseline.OutlierPercentileLow/High must satisfy 0 <= low < high <= 100.');
+end
+if ~isscalar(RTConfig.Baseline.OutlierZThreshold) || ~isnumeric(RTConfig.Baseline.OutlierZThreshold) || ...
+        ~isfinite(RTConfig.Baseline.OutlierZThreshold) || RTConfig.Baseline.OutlierZThreshold <= 0
+    error('RTConfig.Baseline.OutlierZThreshold must be finite and > 0.');
+end
+if ~local_is_scalar_logical_or_numeric_flag(RTConfig.Baseline.RequireConfigHashMatch)
+    error('RTConfig.Baseline.RequireConfigHashMatch must be a scalar logical or numeric flag.');
+end
+if ~(isempty(RTConfig.Baseline.Path) || ischar(RTConfig.Baseline.Path) || isstring(RTConfig.Baseline.Path))
+    error('RTConfig.Baseline.Path must be empty, char, or string.');
+end
+
+%% ===== CHECK FEEDBACK CONFIGURATION =====
+% Step 2B feedback is a non-UI mapping layer only.
+if ~isfield(RTConfig, 'Feedback') || ~isstruct(RTConfig.Feedback)
+    error('RTConfig.Feedback must be a struct.');
+end
+allowedFeedbackModes = {'none','debug_value'};
+if ~isfield(RTConfig.Feedback, 'Mode') || ~ismember(char(RTConfig.Feedback.Mode), allowedFeedbackModes)
+    error('RTConfig.Feedback.Mode must be one of: %s.', strjoin(allowedFeedbackModes, ', '));
+end
+if ~isscalar(RTConfig.Feedback.UpdateEveryNValidMeasures) || ...
+        ~isnumeric(RTConfig.Feedback.UpdateEveryNValidMeasures) || ...
+        ~isfinite(RTConfig.Feedback.UpdateEveryNValidMeasures) || ...
+        RTConfig.Feedback.UpdateEveryNValidMeasures < 1 || ...
+        RTConfig.Feedback.UpdateEveryNValidMeasures ~= round(RTConfig.Feedback.UpdateEveryNValidMeasures)
+    error('RTConfig.Feedback.UpdateEveryNValidMeasures must be a positive integer scalar.');
+end
+allowedMapSources = {'ZSmoothed','ZClipped','ZRaw'};
+if ~isfield(RTConfig.Feedback, 'MapSource') || ~ismember(char(RTConfig.Feedback.MapSource), allowedMapSources)
+    error('RTConfig.Feedback.MapSource must be one of: %s.', strjoin(allowedMapSources, ', '));
+end
+if ~isnumeric(RTConfig.Feedback.ClipRange) || numel(RTConfig.Feedback.ClipRange) ~= 2 || ...
+        RTConfig.Feedback.ClipRange(1) >= RTConfig.Feedback.ClipRange(2)
+    error('RTConfig.Feedback.ClipRange must be [low high] with low < high.');
+end
+
 %% ===== ENSURE OUTPUT PATHS =====
 % Create configured output folders so later save operations do not fail.
 pathFields = {'OutputDir','ValidationDir','BaselinesDir','TrialsDir'};
@@ -223,6 +280,12 @@ end
 if ~isfield(RTConfig, 'Simulation') || isempty(RTConfig.Simulation)
     RTConfig.Simulation = struct();
 end
+if ~isfield(RTConfig, 'Baseline') || isempty(RTConfig.Baseline)
+    RTConfig.Baseline = struct();
+end
+if ~isfield(RTConfig, 'Feedback') || isempty(RTConfig.Feedback)
+    RTConfig.Feedback = struct();
+end
 
 RTConfig = local_set_missing(RTConfig, {'Filter','EmpiricalDelaySamples'}, NaN);
 RTConfig = local_set_missing(RTConfig, {'Filter','DelayCorrectionUsed'}, NaN);
@@ -233,6 +296,19 @@ RTConfig = local_set_missing(RTConfig, {'Simulation','DropChunkIndices'}, []);
 RTConfig = local_set_missing(RTConfig, {'Simulation','RandomSeed'}, []);
 RTConfig = local_set_missing(RTConfig, {'Simulation','EnableJitter'}, false);
 RTConfig = local_set_missing(RTConfig, {'Simulation','MaxJitterSamples'}, 0);
+
+RTConfig = local_set_missing(RTConfig, {'Baseline','MinValidWindows'}, 10);
+RTConfig = local_set_missing(RTConfig, {'Baseline','OutlierMethod'}, 'percentile');
+RTConfig = local_set_missing(RTConfig, {'Baseline','OutlierPercentileLow'}, 5);
+RTConfig = local_set_missing(RTConfig, {'Baseline','OutlierPercentileHigh'}, 95);
+RTConfig = local_set_missing(RTConfig, {'Baseline','OutlierZThreshold'}, 3);
+RTConfig = local_set_missing(RTConfig, {'Baseline','RequireConfigHashMatch'}, true);
+RTConfig = local_set_missing(RTConfig, {'Baseline','Path'}, '');
+
+RTConfig = local_set_missing(RTConfig, {'Feedback','Mode'}, 'none');
+RTConfig = local_set_missing(RTConfig, {'Feedback','UpdateEveryNValidMeasures'}, 1);
+RTConfig = local_set_missing(RTConfig, {'Feedback','MapSource'}, 'ZSmoothed');
+RTConfig = local_set_missing(RTConfig, {'Feedback','ClipRange'}, [-5 5]);
 
 RTConfig = local_set_missing(RTConfig, {'Validation','Step1','EnableFFTComparison'}, true);
 RTConfig = local_set_missing(RTConfig, {'Validation','Step1','EnableIIRSOSComparison'}, true);
@@ -317,4 +393,9 @@ elseif isnumeric(x) && isscalar(x) && (isnan(x) || isfinite(x))
 else
     tf = false;
 end
+end
+
+function tf = local_is_scalar_logical_or_numeric_flag(x)
+% Accept true/false or scalar numeric flags.
+tf = (islogical(x) && isscalar(x)) || (isnumeric(x) && isscalar(x) && isfinite(x));
 end

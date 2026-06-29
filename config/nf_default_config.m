@@ -62,6 +62,23 @@ RTConfig.Spatial.CombinedMatrix = [];
 RTConfig.ZScore.ClipRange = [-5 5];
 RTConfig.ZScore.SmoothAlpha = 0.8;
 
+%% ===== BASELINE DEFAULTS =====
+% Simulated resting produces finalized baselines for later trial z-scoring.
+RTConfig.Baseline.MinValidWindows = 10;
+RTConfig.Baseline.OutlierMethod = 'percentile';
+RTConfig.Baseline.OutlierPercentileLow = 5;
+RTConfig.Baseline.OutlierPercentileHigh = 95;
+RTConfig.Baseline.OutlierZThreshold = 3;
+RTConfig.Baseline.RequireConfigHashMatch = true;
+RTConfig.Baseline.Path = '';
+
+%% ===== FEEDBACK DEFAULTS =====
+% Feedback mapping is disabled until an explicit non-UI mode is requested.
+RTConfig.Feedback.Mode = 'none';
+RTConfig.Feedback.UpdateEveryNValidMeasures = 1;
+RTConfig.Feedback.MapSource = 'ZSmoothed';
+RTConfig.Feedback.ClipRange = [-5 5];
+
 %% ===== DEBUG DEFAULTS =====
 % Schema checks favor early failures during first-version development.
 RTConfig.Debug.CheckMeasureSchema = true;
