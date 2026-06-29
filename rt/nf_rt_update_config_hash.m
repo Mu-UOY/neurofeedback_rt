@@ -55,6 +55,14 @@ Inputs.SimulationEnableDroppedChunks = local_get_nested(RTConfig, {'Simulation',
 Inputs.SimulationDropProbability = local_get_nested(RTConfig, {'Simulation','DropProbability'}, 0);
 Inputs.SimulationDropChunkIndices = local_get_nested(RTConfig, {'Simulation','DropChunkIndices'}, []);
 Inputs.SimulationRandomSeed = local_get_nested(RTConfig, {'Simulation','RandomSeed'}, []);
+Inputs.BaselineOutlierMethod = local_get_nested(RTConfig, {'Baseline','OutlierMethod'}, '');
+Inputs.BaselineOutlierPercentileLow = local_get_nested(RTConfig, {'Baseline','OutlierPercentileLow'}, []);
+Inputs.BaselineOutlierPercentileHigh = local_get_nested(RTConfig, {'Baseline','OutlierPercentileHigh'}, []);
+Inputs.BaselineOutlierZThreshold = local_get_nested(RTConfig, {'Baseline','OutlierZThreshold'}, []);
+Inputs.FeedbackMode = local_get_nested(RTConfig, {'Feedback','Mode'}, '');
+Inputs.FeedbackUpdateEveryNValidMeasures = local_get_nested(RTConfig, {'Feedback','UpdateEveryNValidMeasures'}, []);
+Inputs.FeedbackMapSource = local_get_nested(RTConfig, {'Feedback','MapSource'}, '');
+Inputs.FeedbackClipRange = local_get_nested(RTConfig, {'Feedback','ClipRange'}, []);
 
 %% ===== COMPUTE CONFIG HASH =====
 % Sorted serialization keeps the fingerprint deterministic across runs.

@@ -75,11 +75,13 @@ for i = 1:numel(fields)
     BaselineOut.(fields{i}) = BaselineIn.(fields{i});
 end
 
-% Accept PowerMean/PowerStd aliases used by earlier baseline outputs.
-if isfield(BaselineOut, 'PowerMean') && isfinite(BaselineOut.PowerMean)
+% Accept PowerMean/PowerStd only as aliases when canonical fields are missing.
+if (~isfield(BaselineOut, 'Mean') || ~isfinite(BaselineOut.Mean)) && ...
+        isfield(BaselineOut, 'PowerMean') && isfinite(BaselineOut.PowerMean)
     BaselineOut.Mean = BaselineOut.PowerMean;
 end
-if isfield(BaselineOut, 'PowerStd') && isfinite(BaselineOut.PowerStd)
+if (~isfield(BaselineOut, 'Std') || ~isfinite(BaselineOut.Std)) && ...
+        isfield(BaselineOut, 'PowerStd') && isfinite(BaselineOut.PowerStd)
     BaselineOut.Std = BaselineOut.PowerStd;
 end
 end
