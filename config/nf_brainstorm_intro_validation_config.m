@@ -1,9 +1,10 @@
-function RTConfig = nf_brainstorm_intro_validation_config(exportedMatPath, Fs, nChannels, targetBand)
+function RTConfig = nf_brainstorm_intro_validation_config(exportedMatPath, Fs, nChannels, targetBand, varargin)
 % NF_BRAINSTORM_INTRO_VALIDATION_CONFIG Build config for tutorial raw MEG validation.
 %
 % USAGE:
 %     RTConfig = nf_brainstorm_intro_validation_config(exportedMatPath, Fs, nChannels)
 %     RTConfig = nf_brainstorm_intro_validation_config(exportedMatPath, Fs, nChannels, targetBand)
+%     RTConfig = nf_brainstorm_intro_validation_config(..., 'BrainstormMode', 'bst_function')
 %
 % DESCRIPTION:
 %     Creates a first-pass Step 1 validation configuration for a raw MEG MAT
@@ -43,6 +44,23 @@ if ~isnumeric(targetBand) || numel(targetBand) ~= 2 || targetBand(2) <= targetBa
     error('targetBand must be [low high] with high > low.');
 end
 
+%% ===== PARSE OPTIONS =====
+% Defaults preserve portable test behavior: Brainstorm comparison is skipped.
+p = inputParser();
+p.FunctionName = mfilename;
+addParameter(p, 'BrainstormMode', 'skip', @(x) ischar(x) || isstring(x));
+addParameter(p, 'RequireBrainstormForPass', false, @(x) islogical(x) || isnumeric(x));
+addParameter(p, 'BrainstormPath', '', @(x) ischar(x) || isstring(x));
+addParameter(p, 'FieldTripPath', '', @(x) ischar(x) || isstring(x));
+addParameter(p, 'BrainstormMethod', 'bst-hfilter-2019', @(x) ischar(x) || isstring(x));
+parse(p, varargin{:});
+
+brainstormMode = char(p.Results.BrainstormMode);
+requireBrainstormForPass = logical(p.Results.RequireBrainstormForPass);
+brainstormPath = char(p.Results.BrainstormPath);
+fieldTripPath = char(p.Results.FieldTripPath);
+brainstormMethod = char(p.Results.BrainstormMethod);
+
 %% ===== START FROM DEFAULT CONFIG =====
 % Keep shared defaults centralized and override only tutorial-specific fields.
 RTConfig = nf_default_config();
@@ -69,7 +87,8 @@ RTConfig.Validation.Step1.WindowSamples = RTConfig.PowerWindowSamples;
 RTConfig.Validation.Step1.StepSamples = RTConfig.ChunkSamples;
 RTConfig.Validation.Step1.ReferenceStrideMode = 'step';
 RTConfig.Validation.Step1.ReferenceStepSamples = RTConfig.ChunkSamples;
-RTConfig.Validation.Step1.Brainstorm.Mode = 'skip';
+RTConfig.Validation.Step1.Brainstorm.Mode = brainstormMode;
+RTConfig.Validation.Step1.Brainstorm.RequireForPass = requireBrainstormForPass;
 RTConfig.Validation.Step1.FFT.ReferenceBands = [
     4 8
     8 12
@@ -78,5 +97,12 @@ RTConfig.Validation.Step1.FFT.ReferenceBands = [
 ];
 RTConfig.Validation.Step1.BandDetection.Enable = true;
 RTConfig.Validation.Step1.Controls.Enable = false;
+
+%% ===== BRAINSTORM/FIELDTRIP OPTIONS =====
+% Paths are stored for explicit local Brainstorm comparison runners.
+RTConfig.Brainstorm.Path = brainstormPath;
+RTConfig.Brainstorm.FieldTripPath = fieldTripPath;
+RTConfig.Brainstorm.OfflineBandpassFunction = 'bst_bandpass_hfilter';
+RTConfig.Brainstorm.OfflineBandpassMethod = brainstormMethod;
 
 end

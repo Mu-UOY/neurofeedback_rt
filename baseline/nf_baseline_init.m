@@ -5,8 +5,8 @@ function BaselineAcc = nf_baseline_init(RTConfig, RT)
 %         BaselineAcc = nf_baseline_init(RTConfig, RT)
 %
 % DESCRIPTION:
-%     Creates the mutable accumulator used during simulated resting. Only
-%     valid Measure.Power values are later appended by nf_baseline_update.
+%     Creates the mutable accumulator used during resting baseline collection.
+%     This can be used for simulated/offline resting or live resting acquisition.
 
 %% ===== PARSE INPUTS =====
 % RT is optional; when provided, copy hash provenance into the accumulator.

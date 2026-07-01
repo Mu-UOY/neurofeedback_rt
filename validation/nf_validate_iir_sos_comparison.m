@@ -99,6 +99,8 @@ function Compare = local_empty_compare()
 Compare = struct();
 Compare.RawCorrelation = NaN;
 Compare.ZCorrelation = NaN;
+Compare.ZeroLagRawCorrelation = NaN;
+Compare.ZeroLagZCorrelation = NaN;
 Compare.RawRMSE = NaN;
 Compare.ZRMSE = NaN;
 Compare.MeanPowerRatio = NaN;
@@ -141,13 +143,8 @@ end
 ziir = local_zscore(iirPower);
 zbst = local_zscore(bstPower);
 
-Compare.RawCorrelation = local_corr(iirPower, bstPower);
-Compare.ZCorrelation = local_corr(ziir, zbst);
-Compare.RawRMSE = sqrt(mean((iirPower - bstPower) .^ 2));
-Compare.ZRMSE = sqrt(mean((ziir - zbst) .^ 2));
-Compare.MeanPowerRatio = mean(iirPower) ./ mean(bstPower);
-Compare.MedianPowerRatio = median(iirPower) ./ median(bstPower);
-Compare.MaxAbsZDiff = max(abs(ziir - zbst));
+Compare.ZeroLagRawCorrelation = local_corr(iirPower, bstPower);
+Compare.ZeroLagZCorrelation = local_corr(ziir, zbst);
 
 if numel(samples) > 1
     sampleStep = median(diff(samples));
@@ -163,7 +160,22 @@ if maxLagSteps >= 1
     [bestLagSteps, peak] = local_lag_corr(zbst, ziir, maxLagSteps);
     Compare.BestLagSamples = bestLagSteps .* sampleStep;
     Compare.XCorrPeak = peak;
+    [bstAligned, iirAligned] = local_apply_lag(zbst, ziir, bestLagSteps);
+    [bstPowerAligned, iirPowerAligned] = local_apply_lag(bstPower, iirPower, bestLagSteps);
+else
+    bstAligned = zbst;
+    iirAligned = ziir;
+    bstPowerAligned = bstPower;
+    iirPowerAligned = iirPower;
 end
+
+Compare.RawCorrelation = local_corr(iirPowerAligned, bstPowerAligned);
+Compare.ZCorrelation = local_corr(iirAligned, bstAligned);
+Compare.RawRMSE = sqrt(mean((iirPowerAligned - bstPowerAligned) .^ 2));
+Compare.ZRMSE = sqrt(mean((iirAligned - bstAligned) .^ 2));
+Compare.MeanPowerRatio = mean(iirPowerAligned) ./ mean(bstPowerAligned);
+Compare.MedianPowerRatio = median(iirPowerAligned) ./ median(bstPowerAligned);
+Compare.MaxAbsZDiff = max(abs(iirAligned - bstAligned));
 end
 
 function [iirPower, bstPower, samples] = local_align_power(IIRRef, BSTRef)
@@ -205,6 +217,18 @@ if numel(x) < 2 || std(x) == 0 || std(y) == 0
 end
 C = corrcoef(x, y);
 r = C(1, 2);
+end
+
+function [referenceAligned, delayedAligned] = local_apply_lag(referenceTrace, delayedTrace, lag)
+% Align traces using the same sign convention as local_lag_corr.
+if lag >= 0
+    referenceAligned = referenceTrace(1:(end - lag));
+    delayedAligned = delayedTrace((1 + lag):end);
+else
+    d = -lag;
+    referenceAligned = referenceTrace((1 + d):end);
+    delayedAligned = delayedTrace(1:(end - d));
+end
 end
 
 function [bestLag, peak] = local_lag_corr(referenceTrace, delayedTrace, maxLag)

@@ -43,6 +43,7 @@ overallStatus = local_overall_status({thetaStatus, wrongBandStatus, streamingSta
 %% ===== COPY FIGURES =====
 % Figure paths in the returned Report point to copied files inside reportDir.
 [figurePaths, figureMessages] = local_copy_figures(ReportInputs.FigurePaths, figureDir);
+[syntheticInputStatus, syntheticInputMessage] = local_synthetic_input_status(ReportInputs, figurePaths);
 
 %% ===== BUILD SUMMARY TABLE =====
 % The summary CSV is always a single row with stable columns.
@@ -66,12 +67,14 @@ Report.ReadmePath = local_absolute_path(fullfile(reportDir, 'README_validation_s
 Report.FigurePaths = figurePaths;
 Report.TablePaths = tablePaths;
 Report.OverallStatus = overallStatus;
+Report.SyntheticInputStatus = syntheticInputStatus;
 Report.ThetaRecoveryStatus = thetaStatus;
 Report.WrongBandStatus = wrongBandStatus;
 Report.StreamingAgreementStatus = streamingStatus;
 Report.ProtocolStatus = protocolStatus;
 Report.Limitations = local_limitations();
 Report.Messages = [ ...
+    {syntheticInputMessage}, ...
     {thetaMessage}, ...
     {wrongBandMessage}, ...
     {streamingMessage}, ...
@@ -211,6 +214,47 @@ message = sprintf('BaselinePass=%d, validTrial=%d, finiteZ=%d.', ...
     baselinePass, validTrial, finiteZ);
 end
 
+function [status, message] = local_synthetic_input_status(ReportInputs, figurePaths)
+% Report synthetic-input visibility without affecting algorithm status.
+hasTable = local_has_synthetic_input_table(ReportInputs);
+hasFigure = any(cellfun(@local_is_input_figure, figurePaths));
+if hasTable || hasFigure
+    status = 'PASS';
+    parts = {};
+    if hasTable
+        parts{end + 1} = 'synthetic input metadata table provided'; %#ok<AGROW>
+    end
+    if hasFigure
+        parts{end + 1} = 'synthetic input figures provided'; %#ok<AGROW>
+    end
+    message = strjoin(parts, '; ');
+else
+    status = 'SKIPPED';
+    message = 'Synthetic input metadata/figures were not provided.';
+end
+end
+
+function tf = local_has_synthetic_input_table(ReportInputs)
+% Detect supported synthetic-input metadata table fields.
+tf = false;
+if ~isfield(ReportInputs, 'Tables') || ~isstruct(ReportInputs.Tables)
+    return;
+end
+fields = {'SyntheticInputTable','WrongBandInputTable','SyntheticInputMetadataTable'};
+for iField = 1:numel(fields)
+    if isfield(ReportInputs.Tables, fields{iField}) && istable(ReportInputs.Tables.(fields{iField}))
+        tf = true;
+        return;
+    end
+end
+end
+
+function tf = local_is_input_figure(pathIn)
+% Detect copied synthetic-input visibility figures by filename.
+[~, name, ext] = fileparts(char(pathIn));
+tf = strcmpi(ext, '.png') && contains(lower(name), 'input');
+end
+
 function status = local_overall_status(statuses)
 % Overall status is conservative: any FAIL makes the bundle FAIL.
 if any(strcmp(statuses, 'FAIL'))
@@ -325,16 +369,22 @@ mapping = { ...
     'BaselineTable', 'baseline_summary.csv'; ...
     'TrialMeasuresTable', 'trial_measures.csv'; ...
     'ThetaRecoveryTable', 'theta_recovery.csv'; ...
-    'WrongBandTable', 'wrong_band_control.csv'};
+    'WrongBandTable', 'wrong_band_control.csv'; ...
+    'SyntheticInputTable', 'synthetic_input_metadata.csv'; ...
+    'SyntheticInputMetadataTable', 'synthetic_input_metadata.csv'; ...
+    'WrongBandInputTable', 'wrong_band_input_metadata.csv'};
 
+writtenFiles = {};
 for iMap = 1:size(mapping, 1)
     fieldName = mapping{iMap, 1};
     fileName = mapping{iMap, 2};
-    if isfield(tables, fieldName) && istable(tables.(fieldName))
+    if isfield(tables, fieldName) && istable(tables.(fieldName)) && ...
+            ~ismember(fileName, writtenFiles)
         outFile = fullfile(reportDir, fileName);
         writetable(tables.(fieldName), outFile);
         if exist(outFile, 'file') ~= 0
             tablePaths{end + 1} = local_absolute_path(outFile); %#ok<AGROW>
+            writtenFiles{end + 1} = fileName; %#ok<AGROW>
         end
     end
 end
@@ -378,6 +428,19 @@ fprintf(fid, 'Neurofeedback RT Pre-Live Validation Summary\n');
 fprintf(fid, 'Generated: %s\n', generatedAt);
 fprintf(fid, 'Overall status: %s\n\n', Report.OverallStatus);
 
+fprintf(fid, '0. Synthetic input design: %s\n', Report.SyntheticInputStatus);
+fprintf(fid, 'What was provided:\n');
+fprintf(fid, 'Synthetic validation data with known injected block timing, injected frequency, and amplitude.\n');
+fprintf(fid, 'Key result:\n');
+fprintf(fid, 'Input metadata table saved: %s.\n', local_matching_basenames(Report.TablePaths, 'input_metadata'));
+fprintf(fid, 'Input figures saved: %s.\n', local_synthetic_input_figure_basenames(Report.FigurePaths));
+fprintf(fid, 'Interpretation:\n');
+if strcmp(Report.SyntheticInputStatus, 'PASS')
+    fprintf(fid, 'The validation output can be checked against the known synthetic input rather than only against algorithm-derived outputs.\n\n');
+else
+    fprintf(fid, 'SKIPPED: Synthetic input metadata/figures were unavailable for this report.\n\n');
+end
+
 fprintf(fid, '1. Synthetic theta recovery: %s\n', Report.ThetaRecoveryStatus);
 fprintf(fid, 'What was tested:\n');
 fprintf(fid, 'Known target-band theta was injected during theta-on blocks and absent during baseline/off blocks.\n');
@@ -389,7 +452,7 @@ fprintf(fid, 'Interpretation:\n');
 if strcmp(Report.ThetaRecoveryStatus, 'PASS')
     fprintf(fid, 'The algorithm detects target-band theta when target-band theta is present.\n\n');
 elseif strcmp(Report.ThetaRecoveryStatus, 'SKIPPED')
-    fprintf(fid, 'SKIPPED: %s\n\n', local_skip_reason(Report.Messages, 1));
+    fprintf(fid, 'SKIPPED: %s\n\n', local_skip_reason(Report.Messages, 2));
 else
     fprintf(fid, 'The theta recovery validation did not pass and should be inspected before live testing.\n\n');
 end
@@ -405,7 +468,7 @@ fprintf(fid, 'Interpretation:\n');
 if strcmp(Report.WrongBandStatus, 'PASS')
     fprintf(fid, 'The algorithm does not falsely classify wrong-band activity as target theta.\n\n');
 elseif strcmp(Report.WrongBandStatus, 'SKIPPED')
-    fprintf(fid, 'SKIPPED: %s\n\n', local_skip_reason(Report.Messages, 2));
+    fprintf(fid, 'SKIPPED: %s\n\n', local_skip_reason(Report.Messages, 3));
 else
     fprintf(fid, 'The wrong-band control suggests possible false-positive behavior.\n\n');
 end
@@ -421,7 +484,7 @@ fprintf(fid, 'Interpretation:\n');
 if strcmp(Report.StreamingAgreementStatus, 'PASS')
     fprintf(fid, 'Chunking/filter state/buffer logic reproduce the offline reference.\n\n');
 elseif strcmp(Report.StreamingAgreementStatus, 'SKIPPED')
-    fprintf(fid, 'SKIPPED: %s\n\n', local_skip_reason(Report.Messages, 3));
+    fprintf(fid, 'SKIPPED: %s\n\n', local_skip_reason(Report.Messages, 4));
 else
     fprintf(fid, 'The streaming implementation should be inspected before live testing.\n\n');
 end
@@ -438,7 +501,7 @@ fprintf(fid, 'Interpretation:\n');
 if strcmp(Report.ProtocolStatus, 'PASS')
     fprintf(fid, 'The baseline -> trial -> z-score protocol is inspectable and ready for live dry-run preparation.\n\n');
 elseif strcmp(Report.ProtocolStatus, 'SKIPPED')
-    fprintf(fid, 'SKIPPED: %s\n\n', local_skip_reason(Report.Messages, 4));
+    fprintf(fid, 'SKIPPED: %s\n\n', local_skip_reason(Report.Messages, 5));
 else
     fprintf(fid, 'The simulated protocol should be fixed before live testing.\n\n');
 end
@@ -595,6 +658,53 @@ if logical(value)
     textOut = 'true';
 else
     textOut = 'false';
+end
+end
+
+function textOut = local_matching_basenames(paths, pattern)
+% Return comma-separated basenames whose filenames contain a pattern.
+matches = {};
+if isempty(paths)
+    textOut = 'none';
+    return;
+end
+for iPath = 1:numel(paths)
+    [~, name, ext] = fileparts(char(paths{iPath}));
+    fileName = [name ext];
+    if contains(lower(fileName), lower(pattern))
+        matches{end + 1} = fileName; %#ok<AGROW>
+    end
+end
+if isempty(matches)
+    textOut = 'none';
+else
+    textOut = strjoin(matches, ', ');
+end
+end
+
+function textOut = local_synthetic_input_figure_basenames(paths)
+% Return synthetic-input visibility figure basenames for README reporting.
+patterns = {'input','raw_signal','injection_vs_detected','input_vs_target'};
+matches = {};
+if isempty(paths)
+    textOut = 'none';
+    return;
+end
+for iPath = 1:numel(paths)
+    [~, name, ext] = fileparts(char(paths{iPath}));
+    fileName = [name ext];
+    lowerName = lower(fileName);
+    for iPattern = 1:numel(patterns)
+        if contains(lowerName, patterns{iPattern})
+            matches{end + 1} = fileName; %#ok<AGROW>
+            break;
+        end
+    end
+end
+if isempty(matches)
+    textOut = 'none';
+else
+    textOut = strjoin(matches, ', ');
 end
 end
 

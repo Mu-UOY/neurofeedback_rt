@@ -31,9 +31,13 @@ assert(iscell(Report.FigurePaths), 'Report.FigurePaths must be a cell array.');
 assert(iscell(Report.TablePaths), 'Report.TablePaths must be a cell array.');
 assert(any(cellfun(@(p) endsWith(p, '.csv') && exist(p, 'file') ~= 0, Report.TablePaths)), ...
     'Bundle did not create any CSV outputs.');
+syntheticCsv = dir(fullfile(Report.ReportDir, '*input*.csv'));
+assert(~isempty(syntheticCsv), 'Bundle did not create a synthetic input metadata CSV.');
 assert(~isempty(Report.FigurePaths), 'Bundle did not create any PNG figures.');
 assert(any(cellfun(@(p) endsWith(p, '.png') && exist(p, 'file') ~= 0, Report.FigurePaths)), ...
     'Bundle returned no existing PNG figure paths.');
+syntheticPng = dir(fullfile(Report.ReportDir, 'figures', '*input*.png'));
+assert(~isempty(syntheticPng), 'Bundle did not create synthetic input visibility PNGs.');
 assert(isempty(findall(0, 'Type', 'figure')), ...
     'Bundle left a figure open in headless mode.');
 

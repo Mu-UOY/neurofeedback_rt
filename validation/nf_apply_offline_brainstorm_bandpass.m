@@ -204,33 +204,151 @@ Info.Message = 'Applied Brainstorm filter spec causally with filter().';
 Info.CreatedAt = char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss'));
 end
 
-function [Xf, Info] = local_bst_function(X, RTConfig, requireForPass) %#ok<INUSD>
-functionName = 'bst_bandpass_hfilter';
+function [Xf, Info] = local_bst_function(X, RTConfig, requireForPass)
+% Apply Brainstorm's offline bandpass function directly in nogui mode.
+Xf = [];
+Info = local_bst_info_template(RTConfig);
 
-if isfield(RTConfig, 'Brainstorm') && ...
-        isfield(RTConfig.Brainstorm, 'OfflineBandpassFunction') && ...
-        ~isempty(RTConfig.Brainstorm.OfflineBandpassFunction)
-    functionName = RTConfig.Brainstorm.OfflineBandpassFunction;
+try
+    local_add_brainstorm_path(RTConfig);
+    local_ensure_brainstorm_started(requireForPass);
+catch ME
+    [Xf, Info] = local_bst_unavailable(ME.message, requireForPass, Info);
+    return;
 end
 
-message = ['bst_function mode is not wired because ', functionName, ...
-           ' signature has not been manually verified in this repository. ', ...
-           'Provide a precomputed filtered file, a filter spec, or wire the ', ...
-           'Brainstorm function call manually after inspecting the local file.'];
-
-if requireForPass
-    error('%s', message);
+if exist('process_bandpass', 'file') ~= 0
+    try
+        [Xf, FiltSpec, Messages] = process_bandpass('Compute', double(X), ...
+            double(RTConfig.Fs), Info.HighPass, Info.LowPass, Info.Method, 0, 0, []); %#ok<ASGLU>
+        Info.Status = 'OK';
+        Info.FunctionName = 'process_bandpass';
+        Info.Message = 'Applied Brainstorm process_bandpass Compute bandpass.';
+        Info.Messages = Messages;
+        Info.FiltSpec = FiltSpec;
+        Info.CreatedAt = char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss'));
+        return;
+    catch ME
+        Info.Message = ['process_bandpass failed: ', ME.message];
+        Info.Messages = local_append_message(Info.Messages, Info.Message);
+        if exist('bst_bandpass_hfilter', 'file') == 0
+            [Xf, Info] = local_bst_unavailable(Info.Message, requireForPass, Info);
+            return;
+        end
+    end
 end
 
-[Xf, Info] = local_skip(message);
-Info.Mode = 'bst_function';
-Info.FunctionName = functionName;
+if exist('bst_bandpass_hfilter', 'file') ~= 0
+    try
+        [~, FiltSpec, Messages] = bst_bandpass_hfilter([], double(RTConfig.Fs), ...
+            Info.HighPass, Info.LowPass, 0, 0, [], [], Info.Method);
+        Xf = bst_bandpass_hfilter(double(X), double(RTConfig.Fs), FiltSpec);
+        Info.Status = 'OK';
+        Info.FunctionName = 'bst_bandpass_hfilter';
+        Info.Message = 'Applied Brainstorm bst_bandpass_hfilter bandpass.';
+        Info.Messages = local_append_message(Messages, Info.Messages);
+        Info.FiltSpec = FiltSpec;
+        Info.CreatedAt = char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss'));
+        return;
+    catch ME
+        [Xf, Info] = local_bst_unavailable(['bst_bandpass_hfilter failed: ', ME.message], ...
+            requireForPass, Info);
+        return;
+    end
+end
+
+[Xf, Info] = local_bst_unavailable('Neither process_bandpass nor bst_bandpass_hfilter is available.', ...
+    requireForPass, Info);
 end
 
 function tf = local_bst_function_exists(RTConfig)
-functionName = 'bst_bandpass_hfilter';
-if isfield(RTConfig.Brainstorm, 'OfflineBandpassFunction') && ~isempty(RTConfig.Brainstorm.OfflineBandpassFunction)
-    functionName = RTConfig.Brainstorm.OfflineBandpassFunction;
+local_add_brainstorm_path(RTConfig);
+tf = exist('process_bandpass', 'file') ~= 0 || exist('bst_bandpass_hfilter', 'file') ~= 0 || ...
+    exist('brainstorm', 'file') ~= 0;
 end
-tf = exist(functionName, 'file') ~= 0;
+
+function Info = local_bst_info_template(RTConfig)
+% Initialize Brainstorm direct-call metadata.
+Info = struct();
+Info.Status = 'SKIPPED';
+Info.Mode = 'bst_function';
+Info.FunctionName = '';
+Info.Method = local_bst_method(RTConfig);
+Info.HighPass = RTConfig.TargetBand(1);
+Info.LowPass = RTConfig.TargetBand(2);
+Info.Message = '';
+Info.Messages = {};
+Info.CreatedAt = char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss'));
+end
+
+function method = local_bst_method(RTConfig)
+% Read configured Brainstorm bandpass method.
+method = 'bst-hfilter-2019';
+if isfield(RTConfig, 'Brainstorm') && isfield(RTConfig.Brainstorm, 'OfflineBandpassMethod') && ...
+        ~isempty(RTConfig.Brainstorm.OfflineBandpassMethod)
+    method = char(RTConfig.Brainstorm.OfflineBandpassMethod);
+end
+end
+
+function local_add_brainstorm_path(RTConfig)
+% Add the Brainstorm root when explicitly configured.
+if isfield(RTConfig, 'Brainstorm') && isfield(RTConfig.Brainstorm, 'Path') && ...
+        ~isempty(RTConfig.Brainstorm.Path) && exist(RTConfig.Brainstorm.Path, 'dir') ~= 0
+    addpath(char(RTConfig.Brainstorm.Path));
+end
+end
+
+function local_ensure_brainstorm_started(requireForPass)
+% Start Brainstorm nogui when functions are not already available.
+if exist('process_bandpass', 'file') ~= 0 || exist('bst_bandpass_hfilter', 'file') ~= 0
+    return;
+end
+if exist('brainstorm', 'file') == 0
+    if requireForPass
+        error('Brainstorm function "brainstorm" is not on the MATLAB path.');
+    else
+        error('Brainstorm is not on the MATLAB path.');
+    end
+end
+
+try
+    brainstorm nogui;
+catch ME
+    error('Could not start Brainstorm nogui: %s', ME.message);
+end
+
+if exist('process_bandpass', 'file') == 0 && exist('bst_bandpass_hfilter', 'file') == 0
+    error('Brainstorm started, but process_bandpass/bst_bandpass_hfilter are unavailable.');
+end
+end
+
+function [Xf, Info] = local_bst_unavailable(message, requireForPass, Info)
+% Convert direct-call failure to SKIPPED or fatal depending on config.
+if requireForPass
+    error('%s', message);
+end
+Xf = [];
+Info.Status = 'SKIPPED';
+Info.Mode = 'bst_function';
+Info.Message = message;
+Info.Messages = local_append_message(Info.Messages, message);
+Info.CreatedAt = char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss'));
+end
+
+function messages = local_append_message(messages, newMessage)
+% Append Brainstorm warnings/errors to a cell array defensively.
+if nargin < 1 || isempty(messages)
+    messages = {};
+elseif ischar(messages) || isstring(messages)
+    messages = cellstr(messages);
+elseif ~iscell(messages)
+    messages = {messages};
+end
+if nargin >= 2 && ~isempty(newMessage)
+    if iscell(newMessage)
+        messages = [messages(:); newMessage(:)]';
+    else
+        messages{end + 1} = char(newMessage);
+    end
+end
 end

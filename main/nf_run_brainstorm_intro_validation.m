@@ -31,6 +31,11 @@ addParameter(p, 'timeWindow', [0 120], @(x) isnumeric(x) && numel(x) == 2);
 addParameter(p, 'exportMethod', 'auto', @(x) ischar(x) || isstring(x));
 addParameter(p, 'targetBand', [8 12], @(x) isnumeric(x) && numel(x) == 2);
 addParameter(p, 'channelTarget', 'MEG', @(x) ischar(x) || isstring(x) || iscellstr(x));
+addParameter(p, 'brainstormMode', 'skip', @(x) ischar(x) || isstring(x));
+addParameter(p, 'requireBrainstormForPass', false, @(x) islogical(x) || isnumeric(x));
+addParameter(p, 'brainstormPath', '', @(x) ischar(x) || isstring(x));
+addParameter(p, 'fieldTripPath', '', @(x) ischar(x) || isstring(x));
+addParameter(p, 'brainstormMethod', 'bst-hfilter-2019', @(x) ischar(x) || isstring(x));
 parse(p, varargin{:});
 
 rawDsPath = char(p.Results.rawDsPath);
@@ -39,6 +44,23 @@ timeWindow = double(p.Results.timeWindow);
 exportMethod = char(p.Results.exportMethod);
 targetBand = double(p.Results.targetBand);
 channelTarget = p.Results.channelTarget;
+brainstormMode = char(p.Results.brainstormMode);
+requireBrainstormForPass = logical(p.Results.requireBrainstormForPass);
+brainstormPath = char(p.Results.brainstormPath);
+fieldTripPath = char(p.Results.fieldTripPath);
+brainstormMethod = char(p.Results.brainstormMethod);
+
+%% ===== PREPARE OPTIONAL EXTERNAL PATHS =====
+% These paths are used only for explicit offline Brainstorm comparison/export.
+if ~isempty(brainstormPath)
+    addpath(brainstormPath);
+end
+if ~isempty(fieldTripPath)
+    addpath(fieldTripPath);
+    if exist('ft_defaults', 'file') ~= 0
+        ft_defaults;
+    end
+end
 
 %% ===== EXPORT OR LOAD DATA =====
 % Reuse an existing exported MAT file to avoid unnecessary large raw reads.
@@ -59,7 +81,12 @@ durationSeconds = nSamples ./ Fs;
 
 %% ===== BUILD VALIDATION CONFIG =====
 % The generic validation runner handles offline reference and streaming replay.
-RTConfig = nf_brainstorm_intro_validation_config(outFile, Fs, nChannels, targetBand);
+RTConfig = nf_brainstorm_intro_validation_config(outFile, Fs, nChannels, targetBand, ...
+    'BrainstormMode', brainstormMode, ...
+    'RequireBrainstormForPass', requireBrainstormForPass, ...
+    'BrainstormPath', brainstormPath, ...
+    'FieldTripPath', fieldTripPath, ...
+    'BrainstormMethod', brainstormMethod);
 
 %% ===== RUN VALIDATION =====
 % This is still simulated-online replay of saved raw MEG, not live acquisition.
@@ -80,6 +107,25 @@ fprintf('  Reference stride: %s, %d samples\n', ...
 fprintf('  Reference windows: %d\n', Ref.Metadata.WindowCount);
 fprintf('  Step 1 FFT:     %s\n', Results.Step1.FFT.Status);
 fprintf('  Step 1 IIR/SOS: %s\n', Results.Step1.IIRSOSComparison.Status);
+if isfield(Results.Step1.IIRSOSComparison, 'Message') && ...
+        ~isempty(Results.Step1.IIRSOSComparison.Message)
+    fprintf('  IIR/SOS note:   %s\n', Results.Step1.IIRSOSComparison.Message);
+end
+if isfield(Results.Step1.IIRSOSComparison, 'Compare') && ...
+        isfield(Results.Step1.IIRSOSComparison.Compare, 'ZCorrelation') && ...
+        isfinite(Results.Step1.IIRSOSComparison.Compare.ZCorrelation)
+    fprintf('  IIR/SOS vs Brainstorm z-corr: %.6f\n', ...
+        Results.Step1.IIRSOSComparison.Compare.ZCorrelation);
+end
+if isfield(Results.Step1.IIRSOSComparison, 'BrainstormInfo')
+    info = Results.Step1.IIRSOSComparison.BrainstormInfo;
+    if isfield(info, 'Mode')
+        fprintf('  Brainstorm mode: %s\n', info.Mode);
+    end
+    if isfield(info, 'FunctionName') && ~isempty(info.FunctionName)
+        fprintf('  Brainstorm function: %s\n', info.FunctionName);
+    end
+end
 fprintf('  Band detection: %s\n', Results.Step1.BandDetection.Status);
 fprintf('  Target power mean/std: %.6g / %.6g\n', ...
     Results.Step1.BandDetection.TargetPowerMean, Results.Step1.BandDetection.TargetPowerStd);

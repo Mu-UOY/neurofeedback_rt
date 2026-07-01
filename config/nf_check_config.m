@@ -380,6 +380,7 @@ RTConfig = local_set_missing(RTConfig, {'Brainstorm','FilterSpecPath'}, '');
 RTConfig = local_set_missing(RTConfig, {'Brainstorm','OfflineFilteredPath'}, '');
 RTConfig = local_set_missing(RTConfig, {'Brainstorm','OfflineFilteredVariable'}, 'XBrainstorm');
 RTConfig = local_set_missing(RTConfig, {'Brainstorm','OfflineBandpassFunction'}, 'bst_bandpass_hfilter');
+RTConfig = local_set_missing(RTConfig, {'Brainstorm','OfflineBandpassMethod'}, 'bst-hfilter-2019');
 end
 
 function S = local_set_missing(S, path, value)

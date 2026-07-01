@@ -33,19 +33,20 @@ assert(strcmp(Results.Status, 'SKIPPED'), 'Brainstorm skip mode did not return S
 assert(isfield(Results, 'IIRRef'), 'Skipped comparison did not retain IIRRef.');
 assert(~isempty(Results.Message), 'Skipped comparison should include a useful message.');
 
-RTConfig.Validation.Step1.Brainstorm.Mode = 'bst_function';
+RTConfig.Validation.Step1.Brainstorm.Mode = 'precomputed_filtered';
+RTConfig.Brainstorm.OfflineFilteredPath = fullfile(tempdir(), 'missing_brainstorm_filtered_file.mat');
 Results = nf_validate_iir_sos_comparison(Data, Ref, RTConfig);
 
-assert(strcmp(Results.Status, 'SKIPPED'), 'Unwired bst_function mode did not return SKIPPED.');
-assert(~isempty(Results.Message), 'Unwired bst_function skip should include a useful message.');
+assert(strcmp(Results.Status, 'SKIPPED'), 'Missing Brainstorm precomputed mode did not return SKIPPED.');
+assert(~isempty(Results.Message), 'Missing Brainstorm precomputed skip should include a useful message.');
 
 RTConfig.Validation.Step1.Brainstorm.RequireForPass = true;
 didError = false;
 try
     nf_validate_iir_sos_comparison(Data, Ref, RTConfig);
 catch ME
-    didError = ~isempty(strfind(ME.message, 'signature has not been manually verified')); %#ok<STREMP>
+    didError = ~isempty(strfind(ME.message, 'precomputed filtered file is unavailable')); %#ok<STREMP>
 end
-assert(didError, 'Unwired bst_function mode did not error when RequireForPass was true.');
+assert(didError, 'Missing Brainstorm precomputed mode did not error when RequireForPass was true.');
 
 end

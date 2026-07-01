@@ -122,6 +122,7 @@ RTConfig.Brainstorm.FilterSpecPath = '';
 RTConfig.Brainstorm.OfflineFilteredPath = '';
 RTConfig.Brainstorm.OfflineFilteredVariable = 'XBrainstorm';
 RTConfig.Brainstorm.OfflineBandpassFunction = 'bst_bandpass_hfilter';
+RTConfig.Brainstorm.OfflineBandpassMethod = 'bst-hfilter-2019';
 
 %% ===== SYNC DEFAULTS =====
 % Zero tolerance requires exact sample-index continuity.
