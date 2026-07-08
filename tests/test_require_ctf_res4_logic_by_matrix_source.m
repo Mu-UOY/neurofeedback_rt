@@ -6,6 +6,7 @@ function test_require_ctf_res4_logic_by_matrix_source()
 Modes = nf_modes();
 RTConfig = nf_live_config();
 RTConfig.Debug.Verbose = false;
+RTConfig.Source.FieldTrip.TestBufferFcn = @(varargin) [];
 RTConfig.Session.Mode = Modes.Session.LiveDiagnostics;
 RTConfig.Spatial.MatrixSource = Modes.Spatial.MatrixSource.Precomputed;
 RTConfig.Spatial.CombinedMatrixPath = '';
@@ -26,6 +27,7 @@ cleanupObj = onCleanup(@() delete(tmpPath));
 
 RTConfig = nf_live_config();
 RTConfig.Debug.Verbose = false;
+RTConfig.Source.FieldTrip.TestBufferFcn = @(varargin) [];
 RTConfig.Session.Mode = Modes.Session.LiveSelfTest;
 RTConfig.Spatial.MatrixSource = Modes.Spatial.MatrixSource.Precomputed;
 RTConfig.Spatial.CombinedMatrixPath = tmpPath;
@@ -38,6 +40,7 @@ assert(RTConfig.Source.FieldTrip.RequireCTFRes4 == true, ...
 % Technical fallback is a config selection, not a matrix builder in this step.
 RTConfig = nf_live_config();
 RTConfig.Debug.Verbose = false;
+RTConfig.Source.FieldTrip.TestBufferFcn = @(varargin) [];
 RTConfig.Session.Mode = Modes.Session.LiveSelfTest;
 RTConfig.Spatial.MatrixSource = Modes.Spatial.MatrixSource.TechnicalFallback;
 RTConfig.Source.CTF.ApplyChannelGains = false;
@@ -52,6 +55,7 @@ assert(RTConfig.Source.FieldTrip.RequireCTFRes4 == false, ...
 % Explicitly disabling CTF metadata while requesting CTF corrections is invalid.
 RTConfig = nf_live_config();
 RTConfig.Debug.Verbose = false;
+RTConfig.Source.FieldTrip.TestBufferFcn = @(varargin) [];
 RTConfig.Session.Mode = Modes.Session.LiveSelfTest;
 RTConfig.Spatial.MatrixSource = Modes.Spatial.MatrixSource.TechnicalFallback;
 RTConfig.Source.CTF.ApplyChannelGains = true;

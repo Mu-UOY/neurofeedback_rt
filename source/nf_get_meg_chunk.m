@@ -13,7 +13,25 @@ function [chunk, Source] = nf_get_meg_chunk(Source, RTConfig)
 chunk = [];
 
 %% ===== CHECK SOURCE MODE =====
-% First-version source reading supports simulated modes only.
+% Live FieldTrip dispatch stays outside the simulated replay path.
+Modes = nf_modes();
+if strcmp(Source.Mode, Modes.Source.LiveFieldTrip)
+    if ~isfield(Source, 'LiveAdapter') || ...
+            ~strcmp(Source.LiveAdapter, Modes.LiveAdapter.BenFieldTrip)
+        error('live_fieldtrip chunk reading requires Source.LiveAdapter = ben_fieldtrip_buffer.');
+    end
+    [chunk, Source] = nf_get_meg_chunk_live_fieldtrip_ben(Source, RTConfig);
+    return;
+end
+if strcmp(Source.Mode, 'live_brainstorm')
+    error('live_brainstorm chunk reading is not implemented in Step 3A.');
+end
+if strcmp(Source.Mode, Modes.Source.MockLiveBuffer)
+    error('mock_live_buffer chunk reading is not implemented in Step 3A.');
+end
+
+%% ===== CHECK SIMULATED SOURCE MODE =====
+% Simulated source reading remains unchanged.
 simulatedModes = {'offline_full','simulated_online','simulated_resting','simulated_trial'};
 if ~ismember(Source.Mode, simulatedModes)
     error('Live source reading is not implemented in the first code version.');

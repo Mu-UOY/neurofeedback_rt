@@ -319,6 +319,7 @@ for iField = 1:numel(requiredSections)
     end
 end
 local_require_field(RTConfig.Source, {'LiveAdapter'}, 'RTConfig.Source.LiveAdapter');
+local_require_field(RTConfig.Source, {'Benjamin'}, 'RTConfig.Source.Benjamin');
 local_require_field(RTConfig.Source, {'FieldTrip'}, 'RTConfig.Source.FieldTrip');
 local_require_field(RTConfig.Source, {'CTF'}, 'RTConfig.Source.CTF');
 
@@ -347,24 +348,69 @@ if isMockLive && ~strcmp(RTConfig.Source.LiveAdapter, Modes.LiveAdapter.MockBuff
     error('MockLiveBuffer requires Source.LiveAdapter = mock_buffer.');
 end
 
-if isLiveFieldTrip
-    local_require_field(RTConfig.Source.FieldTrip, {'Host'}, 'RTConfig.Source.FieldTrip.Host');
-    local_require_field(RTConfig.Source.FieldTrip, {'Port'}, 'RTConfig.Source.FieldTrip.Port');
-    local_require_field(RTConfig.Source.FieldTrip, {'TimeoutMs'}, 'RTConfig.Source.FieldTrip.TimeoutMs');
+%% ===== CHECK LIVE CONNECTION CONFIG =====
+% Editable live connection settings stay in nf_live_config/RTConfig only.
+local_require_field(RTConfig.Source.Benjamin, {'CodeRoot'}, ...
+    'RTConfig.Source.Benjamin.CodeRoot');
+local_require_field(RTConfig.Source.Benjamin, {'WiringNotes'}, ...
+    'RTConfig.Source.Benjamin.WiringNotes');
+local_require_field(RTConfig.Source.Benjamin, {'WiringEvidenceFiles'}, ...
+    'RTConfig.Source.Benjamin.WiringEvidenceFiles');
+local_check_optional_text(RTConfig.Source.Benjamin.CodeRoot, ...
+    'RTConfig.Source.Benjamin.CodeRoot');
+local_check_cell_array(RTConfig.Source.Benjamin.WiringNotes, ...
+    'RTConfig.Source.Benjamin.WiringNotes');
+local_check_cell_array(RTConfig.Source.Benjamin.WiringEvidenceFiles, ...
+    'RTConfig.Source.Benjamin.WiringEvidenceFiles');
+
+fieldTripFields = {'Host','Port','TimeoutMs','BufferMPath','FieldTripRoot', ...
+    'RequiredBufferRoot','AllowAlreadyOnPathBuffer','AllowMatlabToolboxBuffer', ...
+    'UseBrainstormPluginPaths','UseCTFRes4FromHeader','RequireCTFRes4', ...
+    'TestBufferFcn','SettingOrigin'};
+for iField = 1:numel(fieldTripFields)
+    local_require_field(RTConfig.Source.FieldTrip, fieldTripFields(iField), ...
+        ['RTConfig.Source.FieldTrip.' fieldTripFields{iField}]);
 end
-local_require_field(RTConfig.Source.FieldTrip, {'UseBrainstormPluginPaths'}, ...
-    'RTConfig.Source.FieldTrip.UseBrainstormPluginPaths');
 local_require_field(RTConfig.Source.FieldTrip, {'UseCTFRes4FromHeader'}, ...
     'RTConfig.Source.FieldTrip.UseCTFRes4FromHeader');
 local_require_field(RTConfig.Source.FieldTrip, {'RequireCTFRes4'}, ...
     'RTConfig.Source.FieldTrip.RequireCTFRes4');
-local_check_scalar_string(RTConfig.Source.FieldTrip.Host, 'RTConfig.Source.FieldTrip.Host');
-local_check_positive_integer(RTConfig.Source.FieldTrip.Port, 'RTConfig.Source.FieldTrip.Port');
+
+hasTestBufferFcn = ~isempty(RTConfig.Source.FieldTrip.TestBufferFcn);
+if hasTestBufferFcn && ~isa(RTConfig.Source.FieldTrip.TestBufferFcn, 'function_handle')
+    error('RTConfig.Source.FieldTrip.TestBufferFcn must be empty or a function_handle.');
+end
+
+if isLiveFieldTrip && ~hasTestBufferFcn
+    local_check_nonempty_text(RTConfig.Source.FieldTrip.Host, ...
+        'RTConfig.Source.FieldTrip.Host');
+    local_check_positive_integer(RTConfig.Source.FieldTrip.Port, ...
+        'RTConfig.Source.FieldTrip.Port');
+else
+    local_check_optional_text(RTConfig.Source.FieldTrip.Host, ...
+        'RTConfig.Source.FieldTrip.Host');
+    if ~isempty(RTConfig.Source.FieldTrip.Port)
+        local_check_positive_integer(RTConfig.Source.FieldTrip.Port, ...
+            'RTConfig.Source.FieldTrip.Port');
+    end
+end
+
 local_check_positive_numeric(RTConfig.Source.FieldTrip.TimeoutMs, 'RTConfig.Source.FieldTrip.TimeoutMs');
+local_check_optional_text(RTConfig.Source.FieldTrip.BufferMPath, ...
+    'RTConfig.Source.FieldTrip.BufferMPath');
+local_check_optional_text(RTConfig.Source.FieldTrip.FieldTripRoot, ...
+    'RTConfig.Source.FieldTrip.FieldTripRoot');
+local_check_optional_text(RTConfig.Source.FieldTrip.RequiredBufferRoot, ...
+    'RTConfig.Source.FieldTrip.RequiredBufferRoot');
+local_check_scalar_logical(RTConfig.Source.FieldTrip.AllowAlreadyOnPathBuffer, ...
+    'RTConfig.Source.FieldTrip.AllowAlreadyOnPathBuffer');
+local_check_scalar_logical(RTConfig.Source.FieldTrip.AllowMatlabToolboxBuffer, ...
+    'RTConfig.Source.FieldTrip.AllowMatlabToolboxBuffer');
 local_check_scalar_logical(RTConfig.Source.FieldTrip.UseBrainstormPluginPaths, ...
     'RTConfig.Source.FieldTrip.UseBrainstormPluginPaths');
 local_check_scalar_logical(RTConfig.Source.FieldTrip.UseCTFRes4FromHeader, ...
     'RTConfig.Source.FieldTrip.UseCTFRes4FromHeader');
+local_check_setting_origin_fields(RTConfig.Source.FieldTrip.SettingOrigin);
 if isFinalized
     local_check_scalar_logical(RTConfig.Source.FieldTrip.RequireCTFRes4, ...
         'RTConfig.Source.FieldTrip.RequireCTFRes4');
@@ -730,6 +776,47 @@ function local_check_scalar_string(value, label)
 % Validate scalar text values while allowing char and string.
 if ~(ischar(value) || (isstring(value) && isscalar(value)))
     error('%s must be char or scalar string.', label);
+end
+end
+
+function local_check_optional_text(value, label)
+% Validate optional text fields used for editable live paths/settings.
+if isempty(value)
+    return;
+end
+local_check_scalar_string(value, label);
+end
+
+function local_check_nonempty_text(value, label)
+% Validate required live connection text fields.
+local_check_scalar_string(value, label);
+if isempty(strtrim(char(value)))
+    error('%s must be nonempty when TestBufferFcn is empty.', label);
+end
+end
+
+function local_check_cell_array(value, label)
+% Validate cell-array audit fields without constraining their text content.
+if ~iscell(value)
+    error('%s must be a cell array.', label);
+end
+end
+
+function local_check_setting_origin_fields(SettingOrigin)
+% Validate provenance labels separately from runtime connection values.
+requiredOrigins = {'Host','Port','BufferMPath','FieldTripRoot', ...
+    'RequiredBufferRoot','UseBrainstormPluginPaths'};
+allowedOrigins = {'config','benjamin_code','test_hook', ...
+    'historical_unconfirmed','unresolved'};
+for iOrigin = 1:numel(requiredOrigins)
+    fieldName = requiredOrigins{iOrigin};
+    local_require_field(SettingOrigin, {fieldName}, ...
+        ['RTConfig.Source.FieldTrip.SettingOrigin.' fieldName]);
+    local_check_nonempty_text(SettingOrigin.(fieldName), ...
+        ['RTConfig.Source.FieldTrip.SettingOrigin.' fieldName]);
+    if ~ismember(char(SettingOrigin.(fieldName)), allowedOrigins)
+        error('Invalid setting origin label for %s.', fieldName);
+    end
 end
 end
 

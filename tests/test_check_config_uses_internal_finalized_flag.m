@@ -6,6 +6,7 @@ function test_check_config_uses_internal_finalized_flag()
 Modes = nf_modes();
 RTConfig = nf_live_config();
 RTConfig.Debug.Verbose = false;
+RTConfig.Source.FieldTrip.TestBufferFcn = @(varargin) [];
 
 assert(RTConfig.Internal.IsFinalized == false, 'Live config should start raw.');
 nf_check_config(RTConfig);

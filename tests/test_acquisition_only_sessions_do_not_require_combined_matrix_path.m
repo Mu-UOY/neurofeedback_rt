@@ -12,6 +12,7 @@ acquisitionOnly = { ...
 for iMode = 1:numel(acquisitionOnly)
     RTConfig = nf_live_config();
     RTConfig.Debug.Verbose = false;
+    RTConfig.Source.FieldTrip.TestBufferFcn = @(varargin) [];
     RTConfig.Session.Mode = acquisitionOnly{iMode};
     RTConfig.Spatial.MatrixSource = Modes.Spatial.MatrixSource.Precomputed;
     RTConfig.Spatial.CombinedMatrixPath = '';

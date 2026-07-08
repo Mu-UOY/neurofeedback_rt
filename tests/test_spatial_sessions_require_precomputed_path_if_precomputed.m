@@ -13,6 +13,7 @@ spatialSessions = { ...
 for iMode = 1:numel(spatialSessions)
     RTConfig = nf_live_config();
     RTConfig.Debug.Verbose = false;
+    RTConfig.Source.FieldTrip.TestBufferFcn = @(varargin) [];
     RTConfig.Session.Mode = spatialSessions{iMode};
     RTConfig.Spatial.MatrixSource = Modes.Spatial.MatrixSource.Precomputed;
     RTConfig.Spatial.CombinedMatrixPath = '';

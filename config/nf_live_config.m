@@ -20,15 +20,35 @@ RTConfig.Session.Mode = Modes.Session.LiveSelfTest;
 RTConfig.Source.Mode = Modes.Source.LiveFieldTrip;
 RTConfig.Source.LiveAdapter = Modes.LiveAdapter.BenFieldTrip;
 
-RTConfig.Source.FieldTrip.Host = '10.0.0.2';
-RTConfig.Source.FieldTrip.Port = 1972;
+% Benjamin wiring evidence was not found in this repository during Step 3A.
+% Keep live connection values explicit and unresolved until the MEG-room
+% operator fills them in or Benjamin's recovered code is made available.
+RTConfig.Source.Benjamin.CodeRoot = '';
+RTConfig.Source.Benjamin.WiringNotes = {};
+RTConfig.Source.Benjamin.WiringEvidenceFiles = {};
+
+RTConfig.Source.FieldTrip.Host = '';
+RTConfig.Source.FieldTrip.Port = [];
 RTConfig.Source.FieldTrip.TimeoutMs = 10000;
-RTConfig.Source.FieldTrip.UseBrainstormPluginPaths = true;
-RTConfig.Source.FieldTrip.Path = '';
+
+RTConfig.Source.FieldTrip.BufferMPath = '';
+RTConfig.Source.FieldTrip.FieldTripRoot = '';
+RTConfig.Source.FieldTrip.RequiredBufferRoot = '';
+RTConfig.Source.FieldTrip.AllowAlreadyOnPathBuffer = false;
+RTConfig.Source.FieldTrip.AllowMatlabToolboxBuffer = false;
+RTConfig.Source.FieldTrip.UseBrainstormPluginPaths = false;
 RTConfig.Source.FieldTrip.UseCTFRes4FromHeader = true;
 
 % Finalized conditionally in nf_finalize_config.
 RTConfig.Source.FieldTrip.RequireCTFRes4 = [];
+RTConfig.Source.FieldTrip.TestBufferFcn = [];
+
+RTConfig.Source.FieldTrip.SettingOrigin.Host = 'unresolved';
+RTConfig.Source.FieldTrip.SettingOrigin.Port = 'unresolved';
+RTConfig.Source.FieldTrip.SettingOrigin.BufferMPath = 'unresolved';
+RTConfig.Source.FieldTrip.SettingOrigin.FieldTripRoot = 'unresolved';
+RTConfig.Source.FieldTrip.SettingOrigin.RequiredBufferRoot = 'unresolved';
+RTConfig.Source.FieldTrip.SettingOrigin.UseBrainstormPluginPaths = 'config';
 
 %% ===== TIMING =====
 % Live/mock-live timing is fixed by the Step 3 acquisition contract.

@@ -6,6 +6,7 @@ function test_check_config_live_fields_without_acquisition()
 Modes = nf_modes();
 RTConfig = nf_live_config();
 RTConfig.Debug.Verbose = false;
+RTConfig.Source.FieldTrip.TestBufferFcn = @(varargin) [];
 nf_check_config(RTConfig);
 
 %% ===== CHECK FINALIZED ACQUISITION-ONLY CONFIG =====
