@@ -15,12 +15,24 @@ if nargin < 1 || isempty(Mode)
 end
 
 %% ===== CHECK SOURCE MODE =====
-% Live adapters are declared but not implemented in this first version.
+% Live FieldTrip dispatch is acquisition-only and must avoid Data.X checks.
 simulatedModes = {'offline_full','simulated_online','simulated_resting','simulated_trial'};
-liveModes = {'live_fieldtrip','live_brainstorm'};
+Mode = char(Mode);
+Modes = nf_modes();
 
-if ismember(Mode, liveModes)
-    error('Live source initialization is not implemented in the first code version.');
+if strcmp(Mode, 'live_fieldtrip')
+    if ~isfield(RTConfig.Source, 'LiveAdapter') || ...
+            ~strcmp(RTConfig.Source.LiveAdapter, Modes.LiveAdapter.BenFieldTrip)
+        error('live_fieldtrip requires Source.LiveAdapter = ben_fieldtrip_buffer.');
+    end
+    Source = nf_source_init_live_fieldtrip_ben(RTConfig);
+    return;
+end
+if strcmp(Mode, 'live_brainstorm')
+    error('live_brainstorm source initialization is not implemented in Step 3A.');
+end
+if strcmp(Mode, 'mock_live_buffer')
+    error('mock_live_buffer source initialization is not implemented in Step 3A.');
 end
 if ~ismember(Mode, simulatedModes)
     error('Unknown source mode: %s', Mode);

@@ -7,6 +7,7 @@ Modes = nf_modes();
 RTConfig = nf_live_config();
 RTConfig.Session.Mode = Modes.Session.LiveDiagnostics;
 RTConfig.Debug.Verbose = false;
+RTConfig.Source.FieldTrip.TestBufferFcn = @(varargin) [];
 
 RTConfig = nf_finalize_config(RTConfig);
 
