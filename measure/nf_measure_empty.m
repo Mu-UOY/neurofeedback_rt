@@ -24,12 +24,19 @@ Measure.ZClipped = NaN;
 Measure.ZSmoothed = NaN;
 Measure.FeedbackValue = NaN;
 
+%% ===== FEEDBACK DISPLAY FIELDS =====
+% Display geometry is assigned only by the feedback mapping layer.
+Measure.FeedbackTargetRadiusPx = NaN;
+Measure.FeedbackDisplayRadiusPx = NaN;
+Measure.FeedbackOuterRadiusPx = NaN;
+Measure.FeedbackDisplayType = '';
+Measure.FeedbackDisplayTime = NaN;
+
 %% ===== TIME FIELDS =====
 % Time reports neural-window time after delay correction.
 Measure.Time = NaN;
 Measure.AcquisitionTime = NaN;
 Measure.NeuralWindowTime = NaN;
-Measure.FeedbackDisplayTime = NaN;
 
 %% ===== SAMPLE INDEX FIELDS =====
 % Raw and filtered sample indices preserve timing provenance.

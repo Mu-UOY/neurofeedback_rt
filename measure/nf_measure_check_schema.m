@@ -37,11 +37,16 @@ end
 if ~(ischar(Measure.SourceMode) || isstring(Measure.SourceMode))
     error('Measure.SourceMode must be char or string.');
 end
+if ~(ischar(Measure.FeedbackDisplayType) || isstring(Measure.FeedbackDisplayType))
+    error('Measure.FeedbackDisplayType must be char or string.');
+end
 
 %% ===== CHECK NUMERIC FIELDS =====
 % Numeric timing and power fields may be scalar or arrays depending on context.
-numericFields = {'Power','ZRaw','ZClipped','ZSmoothed','SampleIndex', ...
-    'WindowStartSample','WindowEndSample','WindowCenterSample'};
+numericFields = {'Power','ZRaw','ZClipped','ZSmoothed','FeedbackValue', ...
+    'FeedbackTargetRadiusPx','FeedbackDisplayRadiusPx','FeedbackOuterRadiusPx', ...
+    'FeedbackDisplayTime','SampleIndex','WindowStartSample','WindowEndSample', ...
+    'WindowCenterSample'};
 for i = 1:numel(numericFields)
     if ~isnumeric(Measure.(numericFields{i}))
         error('Measure.%s must be numeric.', numericFields{i});
