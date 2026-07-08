@@ -311,7 +311,7 @@ end
 %% ===== CHECK REQUIRED LIVE SECTIONS =====
 % These structs are explicit audit fields for later live-room logs.
 requiredSections = {'Internal','Session','MockLive','Protocol','Logging', ...
-    'LiveDryRun','LiveChunkSmokeTest','Safety','Comm'};
+    'LiveDryRun','LiveChunkSmokeTest','LiveRTDryRun','Safety','Comm'};
 for iField = 1:numel(requiredSections)
     fieldName = requiredSections{iField};
     if ~isfield(RTConfig, fieldName) || ~isstruct(RTConfig.(fieldName))
@@ -579,6 +579,7 @@ local_check_mock_live_fields(RTConfig);
 local_check_logging_fields(RTConfig);
 local_check_live_dry_run_fields(RTConfig);
 local_check_live_chunk_smoke_test_fields(RTConfig);
+local_check_live_rt_dry_run_fields(RTConfig);
 local_check_safety_fields(RTConfig);
 local_check_scalar_logical(RTConfig.Comm.EnableTriggers, 'RTConfig.Comm.EnableTriggers');
 
@@ -733,6 +734,32 @@ local_check_positive_integer(RTConfig.LiveChunkSmokeTest.FirstChunkPreviewMaxSam
     'RTConfig.LiveChunkSmokeTest.FirstChunkPreviewMaxSamples');
 local_check_positive_integer(RTConfig.LiveChunkSmokeTest.FirstChunkPreviewMaxChannels, ...
     'RTConfig.LiveChunkSmokeTest.FirstChunkPreviewMaxChannels');
+end
+
+function local_check_live_rt_dry_run_fields(RTConfig)
+% Live RT dry-run settings are validated without acquisition.
+local_check_positive_integer(RTConfig.LiveRTDryRun.NChunks, ...
+    'RTConfig.LiveRTDryRun.NChunks');
+local_check_positive_numeric(RTConfig.LiveRTDryRun.DurationSeconds, ...
+    'RTConfig.LiveRTDryRun.DurationSeconds');
+local_check_nonnegative_integer(RTConfig.LiveRTDryRun.MaxTimeouts, ...
+    'RTConfig.LiveRTDryRun.MaxTimeouts');
+local_check_scalar_logical(RTConfig.LiveRTDryRun.RequireAtLeastOneValidMeasure, ...
+    'RTConfig.LiveRTDryRun.RequireAtLeastOneValidMeasure');
+local_check_scalar_logical(RTConfig.LiveRTDryRun.RequireFeedbackNaN, ...
+    'RTConfig.LiveRTDryRun.RequireFeedbackNaN');
+local_check_scalar_logical(RTConfig.LiveRTDryRun.RequireNoBaseline, ...
+    'RTConfig.LiveRTDryRun.RequireNoBaseline');
+local_check_scalar_logical(RTConfig.LiveRTDryRun.RequireTimingPass, ...
+    'RTConfig.LiveRTDryRun.RequireTimingPass');
+local_check_positive_numeric(RTConfig.LiveRTDryRun.TimingWarningSeconds, ...
+    'RTConfig.LiveRTDryRun.TimingWarningSeconds');
+local_check_scalar_logical(RTConfig.LiveRTDryRun.SaveMeasures, ...
+    'RTConfig.LiveRTDryRun.SaveMeasures');
+local_check_scalar_logical(RTConfig.LiveRTDryRun.SaveRTSummary, ...
+    'RTConfig.LiveRTDryRun.SaveRTSummary');
+local_check_scalar_logical(RTConfig.LiveRTDryRun.SaveChunkMetadata, ...
+    'RTConfig.LiveRTDryRun.SaveChunkMetadata');
 end
 
 function local_check_safety_fields(RTConfig)
