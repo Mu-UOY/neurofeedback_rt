@@ -173,6 +173,19 @@ RTConfig.LiveChunkSmokeTest.MaxTimeouts = 0;
 RTConfig.LiveChunkSmokeTest.FirstChunkPreviewMaxSamples = 200;
 RTConfig.LiveChunkSmokeTest.FirstChunkPreviewMaxChannels = 10;
 
+%% ===== LIVE RT DRY RUN =====
+RTConfig.LiveRTDryRun.NChunks = 35;
+RTConfig.LiveRTDryRun.DurationSeconds = 30;
+RTConfig.LiveRTDryRun.MaxTimeouts = 0;
+RTConfig.LiveRTDryRun.RequireAtLeastOneValidMeasure = true;
+RTConfig.LiveRTDryRun.RequireFeedbackNaN = true;
+RTConfig.LiveRTDryRun.RequireNoBaseline = true;
+RTConfig.LiveRTDryRun.RequireTimingPass = false;
+RTConfig.LiveRTDryRun.TimingWarningSeconds = RTConfig.ChunkSeconds;
+RTConfig.LiveRTDryRun.SaveMeasures = true;
+RTConfig.LiveRTDryRun.SaveRTSummary = true;
+RTConfig.LiveRTDryRun.SaveChunkMetadata = true;
+
 %% ===== SAFETY CONFIG ONLY =====
 % Safety runtime helpers are not part of Step 3A-0a.
 RTConfig.Safety.EnableKeyboardStop = true;
