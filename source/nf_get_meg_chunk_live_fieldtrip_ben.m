@@ -33,6 +33,13 @@ else
     Xraw = double(dat);
 end
 
+sampleIndices = startSample:stopSample;
+if isstruct(dat) && isfield(dat, 'sample_indices') && ...
+        isfield(RTConfig.Source.FieldTrip, 'TestBufferFcn') && ...
+        ~isempty(RTConfig.Source.FieldTrip.TestBufferFcn)
+    sampleIndices = double(dat.sample_indices);
+end
+
 %% ===== APPLY CANDIDATE CTF CORRECTIONS =====
 % The correction function logs unresolved conventions and remains conservative.
 [X, CorrectionInfo] = nf_live_apply_ben_ctf_corrections(Xraw, Source, RTConfig);
@@ -40,8 +47,8 @@ end
 %% ===== PACKAGE CHUNK =====
 chunk = struct();
 chunk.Data = X;
-chunk.SampleIndex = startSample;
-chunk.SampleIndices = startSample:stopSample;
+chunk.SampleIndex = sampleIndices(1);
+chunk.SampleIndices = sampleIndices;
 chunk.NSamples = size(X, 2);
 chunk.ChannelNames = Source.ChannelNamesAfterCorrection;
 chunk.Timestamp = now;

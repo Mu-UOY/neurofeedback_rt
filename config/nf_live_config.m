@@ -165,6 +165,14 @@ RTConfig.LiveDryRun.RequireSamplingRateMatch = true;
 RTConfig.LiveDryRun.RunDuringConfigCheck = false;
 RTConfig.LiveDryRun.DurationSeconds = 30;
 
+%% ===== LIVE CHUNK SMOKE TEST =====
+RTConfig.LiveChunkSmokeTest.NChunks = 50;
+RTConfig.LiveChunkSmokeTest.SaveChunkMetadata = true;
+RTConfig.LiveChunkSmokeTest.SaveFirstChunkPreview = true;
+RTConfig.LiveChunkSmokeTest.MaxTimeouts = 0;
+RTConfig.LiveChunkSmokeTest.FirstChunkPreviewMaxSamples = 200;
+RTConfig.LiveChunkSmokeTest.FirstChunkPreviewMaxChannels = 10;
+
 %% ===== SAFETY CONFIG ONLY =====
 % Safety runtime helpers are not part of Step 3A-0a.
 RTConfig.Safety.EnableKeyboardStop = true;

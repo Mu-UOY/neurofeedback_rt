@@ -311,7 +311,7 @@ end
 %% ===== CHECK REQUIRED LIVE SECTIONS =====
 % These structs are explicit audit fields for later live-room logs.
 requiredSections = {'Internal','Session','MockLive','Protocol','Logging', ...
-    'LiveDryRun','Safety','Comm'};
+    'LiveDryRun','LiveChunkSmokeTest','Safety','Comm'};
 for iField = 1:numel(requiredSections)
     fieldName = requiredSections{iField};
     if ~isfield(RTConfig, fieldName) || ~isstruct(RTConfig.(fieldName))
@@ -578,6 +578,7 @@ end
 local_check_mock_live_fields(RTConfig);
 local_check_logging_fields(RTConfig);
 local_check_live_dry_run_fields(RTConfig);
+local_check_live_chunk_smoke_test_fields(RTConfig);
 local_check_safety_fields(RTConfig);
 local_check_scalar_logical(RTConfig.Comm.EnableTriggers, 'RTConfig.Comm.EnableTriggers');
 
@@ -718,6 +719,22 @@ local_check_positive_numeric(RTConfig.LiveDryRun.DurationSeconds, ...
     'RTConfig.LiveDryRun.DurationSeconds');
 end
 
+function local_check_live_chunk_smoke_test_fields(RTConfig)
+% Live chunk smoke-test settings are validated without acquisition.
+local_check_positive_integer(RTConfig.LiveChunkSmokeTest.NChunks, ...
+    'RTConfig.LiveChunkSmokeTest.NChunks');
+local_check_scalar_logical(RTConfig.LiveChunkSmokeTest.SaveChunkMetadata, ...
+    'RTConfig.LiveChunkSmokeTest.SaveChunkMetadata');
+local_check_scalar_logical(RTConfig.LiveChunkSmokeTest.SaveFirstChunkPreview, ...
+    'RTConfig.LiveChunkSmokeTest.SaveFirstChunkPreview');
+local_check_nonnegative_integer(RTConfig.LiveChunkSmokeTest.MaxTimeouts, ...
+    'RTConfig.LiveChunkSmokeTest.MaxTimeouts');
+local_check_positive_integer(RTConfig.LiveChunkSmokeTest.FirstChunkPreviewMaxSamples, ...
+    'RTConfig.LiveChunkSmokeTest.FirstChunkPreviewMaxSamples');
+local_check_positive_integer(RTConfig.LiveChunkSmokeTest.FirstChunkPreviewMaxChannels, ...
+    'RTConfig.LiveChunkSmokeTest.FirstChunkPreviewMaxChannels');
+end
+
 function local_check_safety_fields(RTConfig)
 % Safety runtime helpers are not implemented here.
 local_check_scalar_logical(RTConfig.Safety.EnableKeyboardStop, ...
@@ -762,6 +779,14 @@ function local_check_positive_integer(value, label)
 if ~isnumeric(value) || ~isscalar(value) || ~isfinite(value) || ...
         value < 1 || value ~= round(value)
     error('%s must be a positive integer scalar.', label);
+end
+end
+
+function local_check_nonnegative_integer(value, label)
+% Validate finite nonnegative integer scalars.
+if ~isnumeric(value) || ~isscalar(value) || ~isfinite(value) || ...
+        value < 0 || value ~= round(value)
+    error('%s must be a nonnegative integer scalar.', label);
 end
 end
 
