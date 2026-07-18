@@ -113,9 +113,11 @@ Verify this first: `git status` should show no un-committed substantive changes;
 changes remain, STOP.
 1. Add .gitattributes at repo root with exactly:
        * text=auto
-       *.m text eol=lf
-       *.md text eol=lf
-       *.txt text eol=lf
+       *.m text
+       *.md text
+       *.txt text
+   (No `eol=lf`: normalize to LF in the repo but leave working-tree endings to core.autocrlf,
+   avoiding a forced Windows working-tree conversion and re-checkout.)
 2. From the repo root run: git add --renormalize .   (single dot). Ensure outputs/ and logs/ are not staged.
 3. Verify the staged set is line-ending-only: `git diff --cached --ignore-cr-at-eol --shortstat` should be
    ~empty (no substantive content), and the staged file list should contain no outputs/, logs/, or binary
