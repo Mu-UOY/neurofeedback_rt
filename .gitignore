@@ -15,6 +15,12 @@ desktop.ini
 *.m~
 *.autosave
 
+# Claude Code tool metadata (local machine/session state, not project source)
+.claude/
+
+# Out-of-band git-stabilization recovery snapshots (not part of project history)
+docs/cleanup_prompts/recovery/
+
 
 # ==============================
 # Generated outputs
