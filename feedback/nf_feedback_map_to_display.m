@@ -31,7 +31,7 @@ switch char(RTConfig.Feedback.Mode)
         end
         Measure.FeedbackValue = value;
 
-    case 'local_circle'
+    case {'local_circle','debug_plot'}
         Circle = nf_feedback_circle_radius(Measure, RTConfig);
 
         % For local_circle, FeedbackValue is normalized u in [0, 1], not a

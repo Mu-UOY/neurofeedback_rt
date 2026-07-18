@@ -22,12 +22,21 @@ Source.MegRefCoef = [];
 
 [chunk, Source] = nf_get_meg_chunk_live_fieldtrip_ben(Source, RTConfig);
 
-assert(chunk.SampleIndex == 1001, 'Chunk SampleIndex did not use LastSampleRead+1.');
+assert(chunk.SampleIndex == 1001, 'Chunk SampleIndex did not match logical start.');
 assert(isequal(chunk.SampleIndices, 1001:1480), 'Chunk SampleIndices mismatch.');
 assert(chunk.NSamples == RTConfig.ChunkSamples, 'Chunk NSamples mismatch.');
 assert(isequal(chunk.BenGetDatRange, [1000 1479]), 'Benjamin get_dat range changed.');
+assert(isequal(chunk.FieldTripReadRange, chunk.BenGetDatRange), 'Read range audit mismatch.');
+assert(isequal(chunk.ReadRangeSamples, chunk.FieldTripReadRange), ...
+    'ReadRangeSamples should audit transport range.');
+assert(strcmp(chunk.IndexingMode, 'fieldtrip_zero_based_transport_matlab_one_based_logical_v1'), ...
+    'Indexing mode audit is missing.');
 assert(~isempty(chunk.BenIndexingNote), 'Ben indexing note missing.');
-assert(Source.LastSampleRead == 1480, 'Live source cursor did not advance.');
+assert(Source.LastClaimedSampleRead == chunk.SampleIndices(end), ...
+    'Live source did not record final claimed sample.');
+assert(Source.LastSampleRead == 1480, 'Live source cursor did not advance to logical stop.');
+assert(strcmp(Source.IndexingMode, chunk.IndexingMode), 'Source indexing mode audit missing.');
+assert(isfield(chunk.CorrectionInfo, 'HasCTFRes4'), 'CorrectionInfo did not come from CTF helper.');
 
 end
 

@@ -27,4 +27,19 @@ catch ME
 end
 assert(didError, 'Conflicting Safety.MaxDurationSeconds was accepted.');
 
+%% ===== CHECK LIVE TRIAL MIRROR CONFLICT =====
+% LiveTrial.MaxFailsafeSeconds may exist only as a derived mirror.
+badConfig = RTConfig;
+badConfig.LiveTrial.MaxFailsafeSeconds = RTConfig.Protocol.Trial.MaxFailsafeSeconds - 1;
+
+didError = false;
+try
+    nf_check_config(badConfig);
+catch ME
+    didError = true;
+    assert(contains(ME.message, 'LiveTrial.MaxFailsafeSeconds'), ...
+        'Unexpected LiveTrial mirror conflict error: %s', ME.message);
+end
+assert(didError, 'Divergent LiveTrial.MaxFailsafeSeconds was accepted.');
+
 end

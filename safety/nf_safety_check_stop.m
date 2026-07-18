@@ -22,6 +22,18 @@ if Safety.StopRequested
     return;
 end
 
+%% ===== CHECK STOP FILE =====
+% Stop-file control is optional but must be real when enabled.
+enableStopFile = local_field(Safety, 'EnableStopFile', false);
+stopFilePath = local_field(Safety, 'StopFilePath', '');
+if enableStopFile && ~isempty(stopFilePath) && exist(char(stopFilePath), 'file') == 2
+    Modes = nf_modes();
+    Safety.StopRequested = true;
+    Safety.StopReason = Modes.StopReason.StopFile;
+    stopRequested = true;
+    return;
+end
+
 %% ===== CHECK KEYBOARD STOP =====
 % KbCheck/KbName may not exist in automated or headless environments.
 enableKeyboard = local_field(Safety, 'EnableKeyboardStop', true);

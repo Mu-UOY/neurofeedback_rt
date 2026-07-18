@@ -39,6 +39,10 @@ record.RuntimeSecs = local_runtime_secs(record);
 record.SourceMode = local_text(chunkMeta, 'SourceMode', ...
     local_nested_text(Logger, {'RTConfig','Source','Mode'}, ''));
 record.ReadHeaderNSamples = local_numeric(chunkMeta, 'ReadHeaderNSamples', NaN);
+readRange = local_read_range(chunkMeta);
+record.FieldTripReadStart = readRange(1);
+record.FieldTripReadStop = readRange(2);
+record.IndexingMode = local_text(chunkMeta, 'IndexingMode', '');
 
 Logger.NChunks = Logger.NChunks + 1;
 if isempty(Logger.ChunkMeta)
@@ -77,6 +81,9 @@ record.CorrectionInfo = struct();
 record.RuntimeSecs = NaN;
 record.SourceMode = '';
 record.ReadHeaderNSamples = NaN;
+record.FieldTripReadStart = NaN;
+record.FieldTripReadStop = NaN;
+record.IndexingMode = '';
 end
 
 function value = local_text(S, fieldName, defaultValue)
@@ -159,6 +166,18 @@ for iField = 1:numel(textFields)
         tf = true;
     end
 end
+end
+
+function value = local_read_range(S)
+value = [NaN NaN];
+if isfield(S, 'FieldTripReadRange') && isnumeric(S.FieldTripReadRange) && numel(S.FieldTripReadRange) >= 2
+    value = double(S.FieldTripReadRange(1:2));
+elseif isfield(S, 'ReadRangeSamples') && isnumeric(S.ReadRangeSamples) && numel(S.ReadRangeSamples) >= 2
+    value = double(S.ReadRangeSamples(1:2));
+elseif isfield(S, 'RequestedGetDatRange') && isnumeric(S.RequestedGetDatRange) && numel(S.RequestedGetDatRange) >= 2
+    value = double(S.RequestedGetDatRange(1:2));
+end
+value = value(:)';
 end
 
 function runtimeSecs = local_runtime_secs(record)

@@ -10,6 +10,10 @@ if nargin < 1 || isempty(Safety) || ~isstruct(Safety) || ...
         ~isfield(Safety, 'MaxDurationSeconds') || isempty(Safety.MaxDurationSeconds)
     return;
 end
+if isfield(Safety, 'UseMaxDurationFailsafe') && ~isempty(Safety.UseMaxDurationFailsafe) && ...
+        ~logical(Safety.UseMaxDurationFailsafe)
+    return;
+end
 if ~isnumeric(Safety.MaxDurationSeconds) || ~isscalar(Safety.MaxDurationSeconds) || ...
         isinf(Safety.MaxDurationSeconds)
     return;

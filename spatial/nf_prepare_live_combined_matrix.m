@@ -48,9 +48,16 @@ Spatial.Hash = '';
 Spatial.MatrixSource = '';
 Spatial.ValidatedAgainstLiveHeader = false;
 Spatial.CorrectionState = struct();
+Spatial.LiveHeaderFingerprint = '';
+Spatial.LiveHeaderFingerprintVersion = NaN;
 Spatial.LiveHeaderHash = '';
 Spatial.IsIPS = false;
 Spatial.IsTechnicalFallback = false;
+Spatial.FallbackType = '';
+Spatial.NumericClass = '';
+Spatial.RequestedDensity = NaN;
+Spatial.RealizedDensity = NaN;
+Spatial.Orientation = '';
 Spatial.Messages = {};
 end
 
@@ -60,6 +67,11 @@ function Spatial = local_prepare_technical_fallback(Spatial, Source, RTConfig, M
 fallbackType = local_get_text(RTConfig, {'Spatial','Fallback','Type'}, 'single_channel');
 
 switch fallbackType
+    case Modes.Spatial.FallbackType.RepresentativeDense
+        Spatial = local_prepare_representative_fallback( ...
+            Spatial, Source, channelNames, nChannels, RTConfig, Modes);
+        return;
+
     case 'single_channel'
         selected = local_single_channel_index(channelNames, RTConfig);
 
@@ -89,10 +101,70 @@ end
 Spatial.Hash = local_matrix_hash(matrix);
 Spatial.ValidatedAgainstLiveHeader = true;
 Spatial.CorrectionState = local_field(Source, 'CorrectionState', struct());
-Spatial.LiveHeaderHash = local_text_field(Source, 'HeaderHash', '');
+Spatial.LiveHeaderFingerprint = local_source_fingerprint(Source);
+Spatial.LiveHeaderFingerprintVersion = local_numeric_field(Source, 'HeaderFingerprintVersion', NaN);
+Spatial.LiveHeaderHash = Spatial.LiveHeaderFingerprint;
 Spatial.IsIPS = false;
 Spatial.IsTechnicalFallback = true;
+Spatial.FallbackType = fallbackType;
+Spatial.NumericClass = class(matrix);
+Spatial.RequestedDensity = nnz(matrix) ./ numel(matrix);
+Spatial.RealizedDensity = Spatial.RequestedDensity;
+Spatial.Orientation = Modes.MatrixOrientation.OutputByInput;
 Spatial.Messages = {'Technical fallback matrix used; do not claim IPS neurofeedback.'};
+end
+
+function Spatial = local_prepare_representative_fallback(Spatial, Source, channelNames, nChannels, RTConfig, Modes)
+% Build the production-shaped deterministic Step 0 technical matrix.
+cfg = RTConfig.DevelopmentSession.Matrix;
+if nChannels ~= RTConfig.DevelopmentSession.Input.TotalChannelCount
+    error('Step 0 source channel count does not match the provisional input contract.');
+end
+nOutputs = cfg.OutputRowUpperBound;
+rngState = rng;
+restoreRng = onCleanup(@() rng(rngState)); %#ok<NASGU>
+rng(cfg.RandomSeed, 'twister');
+
+matrix = randn(nOutputs, nChannels, cfg.NumericClass);
+if cfg.Density < 1
+    mask = rand(nOutputs, nChannels) < cfg.Density;
+    emptyRows = find(~any(mask, 2));
+    for iRow = reshape(emptyRows, 1, [])
+        repairColumn = mod(iRow - 1, nChannels) + 1;
+        mask(iRow, repairColumn) = true;
+    end
+    matrix = matrix .* cast(mask, cfg.NumericClass);
+end
+if cfg.ScaleByInputSqrt
+    matrix = matrix ./ cast(sqrt(nChannels), cfg.NumericClass);
+end
+
+Spatial.CombinedMatrix = matrix;
+Spatial.InputChannelNames = channelNames;
+Spatial.OutputSignalNames = local_development_signal_names(nOutputs);
+Spatial.Hash = local_matrix_hash(matrix);
+Spatial.ValidatedAgainstLiveHeader = true;
+Spatial.CorrectionState = local_field(Source, 'CorrectionState', struct());
+Spatial.LiveHeaderFingerprint = local_source_fingerprint(Source);
+Spatial.LiveHeaderFingerprintVersion = local_numeric_field(Source, 'HeaderFingerprintVersion', NaN);
+Spatial.LiveHeaderHash = Spatial.LiveHeaderFingerprint;
+Spatial.IsIPS = false;
+Spatial.IsTechnicalFallback = true;
+Spatial.FallbackType = Modes.Spatial.FallbackType.RepresentativeDense;
+Spatial.NumericClass = class(matrix);
+Spatial.RequestedDensity = cfg.Density;
+Spatial.RealizedDensity = nnz(matrix) ./ numel(matrix);
+Spatial.Orientation = cfg.Orientation;
+Spatial.Messages = {'Representative technical fallback used; it is not an IPS matrix.'};
+warning('Representative technical fallback used; do not claim IPS neurofeedback.');
+end
+
+function names = local_development_signal_names(nSignals)
+% Produce deterministic technical output labels.
+names = cell(1, nSignals);
+for iSignal = 1:nSignals
+    names{iSignal} = sprintf('technical_source_row_%04d', iSignal);
+end
 end
 
 function Spatial = local_prepare_precomputed(Spatial, Source, RTConfig)
@@ -111,8 +183,20 @@ Spatial.InputChannelNames = local_meta_cellstr(meta, 'InputChannelNames', {});
 Spatial.OutputSignalNames = local_meta_cellstr(meta, 'OutputSignalNames', {});
 Spatial.Hash = local_meta_text(meta, 'Hash', '');
 Spatial.MatrixSource = local_get_text(RTConfig, {'Spatial','MatrixSource'}, '');
-Spatial.CorrectionState = local_meta_struct(meta, 'CorrectionState', local_field(Source, 'CorrectionState', struct()));
-Spatial.LiveHeaderHash = local_meta_text(meta, 'LiveHeaderHash', local_text_field(Source, 'HeaderHash', ''));
+Spatial.CorrectionState = local_meta_struct(meta, 'CorrectionState', struct());
+Spatial.LiveHeaderFingerprint = local_meta_text(meta, 'LiveHeaderFingerprint', '');
+Spatial.LiveHeaderFingerprintVersion = local_meta_numeric(meta, 'LiveHeaderFingerprintVersion', NaN);
+Spatial.LiveHeaderHash = local_meta_text(meta, 'LiveHeaderHash', '');
+if isempty(Spatial.LiveHeaderFingerprint) && ~isempty(Spatial.LiveHeaderHash)
+    if local_is_legacy_nsamples_hash(Spatial.LiveHeaderHash)
+        error(['Precomputed spatial matrix has legacy NSamples-based LiveHeaderHash metadata. ', ...
+            'Regenerate matrix metadata with LiveHeaderFingerprint structural identity.']);
+    end
+    Spatial.LiveHeaderFingerprint = Spatial.LiveHeaderHash;
+end
+if isempty(Spatial.LiveHeaderHash)
+    Spatial.LiveHeaderHash = Spatial.LiveHeaderFingerprint;
+end
 Spatial.IsIPS = local_meta_logical(meta, 'IsIPS', false);
 Spatial.IsTechnicalFallback = false;
 Spatial.Messages = local_meta_cellstr(meta, 'Messages', {});
@@ -121,8 +205,17 @@ if isempty(Spatial.Hash)
     Spatial.Hash = local_matrix_hash(matrix);
 end
 if isempty(Spatial.InputChannelNames)
-    Spatial.InputChannelNames = local_source_channel_names(Source);
-    Spatial.Messages{end+1} = 'Precomputed matrix did not include InputChannelNames; live header order was used for validation.';
+    error('Precomputed spatial matrix is missing InputChannelNames metadata.');
+end
+if isempty(fieldnames(Spatial.CorrectionState))
+    error('Precomputed spatial matrix is missing CorrectionState metadata.');
+end
+if ~Spatial.IsIPS
+    error('Precomputed spatial matrix must explicitly set IsIPS=true.');
+end
+sourceFingerprint = local_source_fingerprint(Source);
+if ~isempty(sourceFingerprint) && isempty(Spatial.LiveHeaderFingerprint)
+    error('Precomputed spatial matrix is missing LiveHeaderFingerprint metadata for current source validation.');
 end
 if isempty(Spatial.OutputSignalNames)
     Spatial.OutputSignalNames = local_default_signal_names(size(matrix, 1));
@@ -267,6 +360,14 @@ if isstruct(S) && isfield(S, fieldName) && isstruct(S.(fieldName))
 end
 end
 
+function value = local_meta_numeric(S, fieldName, defaultValue)
+% Read optional metadata numeric scalar.
+value = defaultValue;
+if isstruct(S) && isfield(S, fieldName) && isnumeric(S.(fieldName)) && isscalar(S.(fieldName))
+    value = double(S.(fieldName));
+end
+end
+
 function value = local_meta_cellstr(S, fieldName, defaultValue)
 % Read optional metadata cellstr.
 value = defaultValue;
@@ -359,6 +460,20 @@ value = defaultValue;
 if isstruct(S) && isfield(S, fieldName) && isnumeric(S.(fieldName)) && isscalar(S.(fieldName))
     value = double(S.(fieldName));
 end
+end
+
+function value = local_source_fingerprint(Source)
+% Prefer the canonical structural fingerprint, then legacy alias.
+value = local_text_field(Source, 'HeaderFingerprint', '');
+if isempty(value)
+    value = local_text_field(Source, 'HeaderHash', '');
+end
+end
+
+function tf = local_is_legacy_nsamples_hash(value)
+% Detect old volatile header hashes containing NSamples.
+value = char(value);
+tf = startsWith(value, 'fs_') && contains(value, '_nch_') && contains(value, '_ns_');
 end
 
 function values = local_cellstr(values)

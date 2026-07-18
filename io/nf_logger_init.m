@@ -16,7 +16,13 @@ local_check_phase(phase);
 
 %% ===== CREATE SESSION TREE =====
 % Session owns all files created by this logger instance.
-Session = nf_make_session_output_dir(RTConfig, phase);
+if isfield(RTConfig, 'Logging') && isfield(RTConfig.Logging, 'ExistingSession') && ...
+        isstruct(RTConfig.Logging.ExistingSession) && ...
+        isfield(RTConfig.Logging.ExistingSession, 'SessionDir')
+    Session = RTConfig.Logging.ExistingSession;
+else
+    Session = nf_make_session_output_dir(RTConfig, phase);
+end
 createdAt = char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss'));
 SourceSummary = local_source_summary(Source, RTConfig);
 
@@ -70,7 +76,8 @@ end
 function local_check_phase(phase)
 % Accept only the local Step 3A-0d phase labels.
 allowed = {'live_self_test','live_resting','live_trial','live_rt_dry_run', ...
-    'live_chunk_smoke_test','mock_live_test','resting','trial','test','session'};
+    'live_chunk_smoke_test','mock_live_test','resting','trial','test','session', ...
+    'development_full_chain'};
 if ~ismember(phase, allowed)
     error('Unknown logger phase: %s', phase);
 end

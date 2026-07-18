@@ -9,7 +9,12 @@ function BlockInfo = nf_live_detect_acq_block_size(RTConfig, Header0)
 %     decision and is not thrown here.
 
 %% ===== INITIALIZE OUTPUT =====
-timeoutSecs = local_get_numeric(RTConfig, {'LiveDryRun','TimeoutSecs'}, 5);
+Modes = nf_modes();
+timeoutSecs = RTConfig.LiveDryRun.TimeoutSecs;
+if local_get_logical(RTConfig, {'DevelopmentSession','Enabled'}, false)
+    timeoutSecs = RTConfig.DevelopmentSession.Source.ReadinessTimeoutSeconds;
+end
+pollSeconds = RTConfig.Source.FieldTrip.HeaderPollSeconds;
 fs = local_get_numeric(Header0, {'Fs'}, local_get_numeric(RTConfig, {'Fs'}, NaN));
 prevSample = Header0.NSamples;
 
@@ -21,6 +26,26 @@ BlockInfo.AcquisitionBlockSamples = NaN;
 BlockInfo.AcquisitionBlockSeconds = NaN;
 BlockInfo.Timeout = false;
 BlockInfo.Messages = {};
+BlockInfo.AdvancementCount = 0;
+BlockInfo.Pass = false;
+BlockInfo.Status = Modes.ReadinessStatus.Fail;
+
+%% ===== HANDLE STRICT STEP 0 TEST READINESS =====
+isStep0Headless = nf_is_strict_step0_headless_contract(RTConfig);
+if isStep0Headless
+    advanceSamples = local_get_numeric(RTConfig, ...
+        {'DevelopmentSession','Source','ReadinessAdvanceSamples'}, NaN);
+    nf_live_buffer_call(RTConfig, Modes.TestBufferCommand.Advance, advanceSamples);
+    hdr = nf_live_buffer_call(RTConfig, 'get_hdr', []);
+    BlockInfo = local_record_advance(BlockInfo, prevSample, ...
+        local_header_nsamples(hdr), fs);
+    if ~BlockInfo.Pass
+        BlockInfo.Timeout = true;
+        BlockInfo.Messages{end+1} = ...
+            'Step 0 deterministic readiness probe did not observe positive advancement.';
+    end
+    return;
+end
 
 %% ===== POLL HEADER ADVANCE =====
 % Use the same buffer wrapper used by all live source helpers.
@@ -31,15 +56,11 @@ while toc(tStart) <= timeoutSecs
     if isfinite(nsamples)
         BlockInfo.SecondNSamples = nsamples;
         if nsamples > prevSample
-            BlockInfo.SampleCountAdvanced = true;
-            BlockInfo.AcquisitionBlockSamples = nsamples - prevSample;
-            if isfinite(fs) && fs > 0
-                BlockInfo.AcquisitionBlockSeconds = BlockInfo.AcquisitionBlockSamples ./ fs;
-            end
+            BlockInfo = local_record_advance(BlockInfo, prevSample, nsamples, fs);
             return;
         end
     end
-    pause(0.05);
+    pause(pollSeconds);
 end
 
 %% ===== RECORD TIMEOUT =====
@@ -55,7 +76,26 @@ nsamples = NaN;
 if isstruct(hdr) && isfield(hdr, 'nsamples') && isnumeric(hdr.nsamples) && ...
         isscalar(hdr.nsamples) && isfinite(hdr.nsamples)
     nsamples = double(hdr.nsamples);
+elseif isstruct(hdr) && isfield(hdr, 'nSamples') && isnumeric(hdr.nSamples) && ...
+        isscalar(hdr.nSamples) && isfinite(hdr.nSamples)
+    nsamples = double(hdr.nSamples);
 end
+end
+
+function BlockInfo = local_record_advance(BlockInfo, previous, current, fs)
+% Normalize readiness evidence and fail closed on malformed/nonpositive data.
+BlockInfo.SecondNSamples = current;
+if ~isfinite(previous) || ~isfinite(current) || current <= previous
+    return;
+end
+BlockInfo.SampleCountAdvanced = true;
+BlockInfo.AcquisitionBlockSamples = current - previous;
+BlockInfo.AdvancementCount = BlockInfo.AcquisitionBlockSamples;
+if isfinite(fs) && fs > 0
+    BlockInfo.AcquisitionBlockSeconds = BlockInfo.AcquisitionBlockSamples ./ fs;
+end
+BlockInfo.Pass = true;
+BlockInfo.Status = nf_modes().ReadinessStatus.Pass;
 end
 
 function value = local_get_numeric(S, path, defaultValue)
@@ -71,5 +111,22 @@ for iPath = 1:numel(path)
 end
 if isnumeric(cursor) && isscalar(cursor) && isfinite(cursor)
     value = double(cursor);
+end
+end
+
+function value = local_get_logical(S, path, defaultValue)
+% Read optional nested logical scalar.
+value = defaultValue;
+cursor = S;
+for iPath = 1:numel(path)
+    if ~isstruct(cursor) || ~isfield(cursor, path{iPath})
+        return;
+    end
+    cursor = cursor.(path{iPath});
+end
+if islogical(cursor) && isscalar(cursor)
+    value = cursor;
+elseif isnumeric(cursor) && isscalar(cursor) && isfinite(cursor)
+    value = cursor ~= 0;
 end
 end

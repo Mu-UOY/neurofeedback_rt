@@ -21,6 +21,26 @@ catch ME
         'Unexpected spatial mismatch error: %s', ME.message);
 end
 assert(didError, 'Spatial channel-order mismatch was accepted.');
+
+%% ===== PRECOMPUTED-STYLE MATRIX ALSO REJECTS MISMATCH =====
+SpatialReal = struct();
+SpatialReal.CombinedMatrix = eye(2);
+SpatialReal.InputChannelNames = {'MEG001','MEG002'};
+SpatialReal.OutputSignalNames = {'sig1','sig2'};
+SpatialReal.LiveHeaderHash = 'header_a';
+SpatialReal.CorrectionState = SourceA.CorrectionState;
+SpatialReal.IsIPS = true;
+SpatialReal.IsTechnicalFallback = false;
+
+didError = false;
+try
+    nf_revalidate_live_spatial_against_source(SpatialReal, SourceB, RTConfig);
+catch ME
+    didError = true;
+    assert(contains(lower(ME.message), 'mismatch'), ...
+        'Unexpected real spatial mismatch error: %s', ME.message);
+end
+assert(didError, 'Real spatial channel-order mismatch was accepted.');
 end
 
 function Source = local_source(names, hashValue)
@@ -31,5 +51,7 @@ Source.ChannelNames = names;
 Source.ChannelNamesAfterCorrection = names;
 Source.HeaderHash = hashValue;
 Source.CorrectionState = struct('AppliedChannelGains', false, ...
-    'AppliedMegRefCorrection', false, 'AppliedProjector', false);
+    'AppliedMegRefCorrection', false, 'RemovedBlockMean', false, ...
+    'AppliedProjector', false, 'RequiresMarcConfirmation', true, ...
+    'MarcConfirmed', false);
 end

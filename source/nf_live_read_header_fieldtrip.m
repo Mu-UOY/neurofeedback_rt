@@ -17,20 +17,25 @@ end
 %% ===== EXTRACT HEADER FIELDS =====
 % FieldTrip/Brainstorm header field names may vary slightly across adapters.
 Header = struct();
-Header.Fs = local_required_numeric(hdr, 'fsample', 'hdr.fsample');
-Header.NSamples = local_required_numeric(hdr, 'nsamples', 'hdr.nsamples');
+Header.Fs = local_required_numeric(hdr, {'fsample','Fs'}, 'hdr.fsample/Fs');
+Header.NSamples = local_required_sample_count(hdr, {'nsamples','nSamples'}, 'hdr.nsamples/nSamples');
 Header.ChannelNames = local_channel_names(hdr);
 Header.NChannels = local_nchannels(hdr, Header.ChannelNames);
 Header.RawHeader = hdr;
 Header.HasCTFRes4 = isfield(hdr, 'ctf_res4') && ~isempty(hdr.ctf_res4);
 Header.SettingOrigin = RTConfig.Source.FieldTrip.SettingOrigin;
 Header.ResolvedConnection = local_resolved_connection(RTConfig);
+[Header.StructuralFingerprint, Header.StructuralFingerprintInputs, ...
+    Header.StructuralFingerprintVersion] = nf_live_header_fingerprint(Header);
 
 %% ===== VALIDATE CHANNEL LABELS =====
 % Missing labels are a formal channel/header check failure when required.
 requireLabels = local_get_logical(RTConfig, {'LiveDryRun','RequireChannelLabels'}, true);
 if requireLabels && isempty(Header.ChannelNames)
     error('FieldTrip header does not contain channel labels.');
+end
+if ~isempty(Header.ChannelNames) && numel(unique(Header.ChannelNames)) ~= numel(Header.ChannelNames)
+    error('FieldTrip header contains duplicate channel labels.');
 end
 
 %% ===== VALIDATE SAMPLING RATE =====
@@ -53,13 +58,36 @@ end
 
 end
 
-function value = local_required_numeric(S, fieldName, label)
-% Extract a finite numeric scalar from a raw header.
-if ~isfield(S, fieldName) || isempty(S.(fieldName)) || ...
-        ~isnumeric(S.(fieldName)) || ~isscalar(S.(fieldName)) || ~isfinite(S.(fieldName))
+function value = local_required_numeric(S, fieldNames, label)
+% Extract a finite positive numeric scalar from a raw header.
+value = [];
+for iField = 1:numel(fieldNames)
+    fieldName = fieldNames{iField};
+    if isfield(S, fieldName) && ~isempty(S.(fieldName)) && ...
+            isnumeric(S.(fieldName)) && isscalar(S.(fieldName)) && isfinite(S.(fieldName))
+        value = double(S.(fieldName));
+        break;
+    end
+end
+if isempty(value) || value <= 0
     error('%s must be a finite numeric scalar.', label);
 end
-value = double(S.(fieldName));
+end
+
+function value = local_required_sample_count(S, fieldNames, label)
+% Extract a finite nonnegative integer sample count.
+value = [];
+for iField = 1:numel(fieldNames)
+    fieldName = fieldNames{iField};
+    if isfield(S, fieldName) && ~isempty(S.(fieldName)) && ...
+            isnumeric(S.(fieldName)) && isscalar(S.(fieldName)) && isfinite(S.(fieldName))
+        value = double(S.(fieldName));
+        break;
+    end
+end
+if isempty(value) || value < 0 || value ~= round(value)
+    error('%s must be a finite nonnegative integer scalar.', label);
+end
 end
 
 function names = local_channel_names(hdr)
@@ -73,11 +101,19 @@ end
 end
 
 function nChannels = local_nchannels(hdr, names)
-% Prefer hdr.nchans, falling back to label count.
+% Prefer explicit channel count, falling back to label count.
 if isfield(hdr, 'nchans') && ~isempty(hdr.nchans) && isnumeric(hdr.nchans)
     nChannels = double(hdr.nchans);
+elseif isfield(hdr, 'nChans') && ~isempty(hdr.nChans) && isnumeric(hdr.nChans)
+    nChannels = double(hdr.nChans);
 else
     nChannels = numel(names);
+end
+if ~isscalar(nChannels) || ~isfinite(nChannels) || nChannels < 1 || nChannels ~= round(nChannels)
+    error('FieldTrip header channel count must be a positive integer scalar.');
+end
+if ~isempty(names) && nChannels ~= numel(names)
+    error('FieldTrip header channel count disagrees with channel labels.');
 end
 end
 
@@ -111,6 +147,7 @@ ResolvedConnection.Host = RTConfig.Source.FieldTrip.Host;
 ResolvedConnection.Port = RTConfig.Source.FieldTrip.Port;
 ResolvedConnection.SelectedBufferFunction = selectedBuffer;
 ResolvedConnection.UsedTestHook = usedTestHook;
+ResolvedConnection.StreamRole = local_get_text(RTConfig, {'Source','FieldTrip','StreamRole'}, 'unknown');
 end
 
 function expectedFs = local_expected_fs(RTConfig)
@@ -136,5 +173,21 @@ for iPath = 1:numel(path)
 end
 if islogical(cursor) && isscalar(cursor)
     value = cursor;
+end
+end
+
+function value = local_get_text(S, path, defaultValue)
+% Read optional nested text field.
+value = defaultValue;
+cursor = S;
+for iPath = 1:numel(path)
+    fieldName = path{iPath};
+    if ~isstruct(cursor) || ~isfield(cursor, fieldName)
+        return;
+    end
+    cursor = cursor.(fieldName);
+end
+if ischar(cursor) || (isstring(cursor) && isscalar(cursor))
+    value = char(cursor);
 end
 end

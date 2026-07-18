@@ -24,7 +24,12 @@ Source.LiveAdapter = RTConfig.Source.LiveAdapter;
 Source.PathInfo = PathInfo;
 Source.Header = Header;
 Source.RawHeader = Header.RawHeader;
-Source.HeaderHash = local_header_hash(Header);
+Source.HeaderFingerprint = Header.StructuralFingerprint;
+Source.HeaderFingerprintInputs = Header.StructuralFingerprintInputs;
+Source.HeaderFingerprintVersion = Header.StructuralFingerprintVersion;
+% HeaderHash is a legacy field name; it now aliases the stable structural
+% fingerprint and excludes volatile NSamples.
+Source.HeaderHash = Source.HeaderFingerprint;
 Source.Fs = Header.Fs;
 Source.NChannels = Header.NChannels;
 Source.ChannelNames = Header.ChannelNames;
@@ -43,6 +48,11 @@ Source.CorrectionState = local_correction_state(RTConfig, CTFInfo);
 Source.IsLive = true;
 Source.IsMockLive = false;
 Source.LastError = '';
+Source.TimeoutCount = 0;
+Source.ConsecutiveTimeoutCount = 0;
+Source.BufferResetCount = 0;
+Source.LastBufferHeaderNSamples = Header.NSamples;
+Source.LastReadStatus = 'initialized';
 Source.Messages = [PathInfo.Messages, CTFInfo.Messages, BlockInfo.Messages];
 Source.SettingOrigin = RTConfig.Source.FieldTrip.SettingOrigin;
 Source.ResolvedConnection = local_resolved_connection(RTConfig, Header, PathInfo);
@@ -84,6 +94,10 @@ ResolvedConnection.RequiredBufferRoot = RTConfig.Source.FieldTrip.RequiredBuffer
 ResolvedConnection.SelectedBufferFunction = Header.ResolvedConnection.SelectedBufferFunction;
 ResolvedConnection.AllBufferCandidates = PathInfo.AllBufferPaths;
 ResolvedConnection.UsedTestHook = Header.ResolvedConnection.UsedTestHook;
+ResolvedConnection.StreamRole = Header.ResolvedConnection.StreamRole;
+ResolvedConnection.FieldTripVersion = local_field(PathInfo, 'FieldTripVersion', '');
+ResolvedConnection.FtRealtimeFileProxyExists = local_field(PathInfo, 'FtRealtimeFileProxyExists', false);
+ResolvedConnection.FtRealtimeFileProxyPath = local_field(PathInfo, 'FtRealtimeFileProxyPath', '');
 ResolvedConnection.BenjaminEvidenceFiles = RTConfig.Source.Benjamin.WiringEvidenceFiles;
 end
 
@@ -92,8 +106,9 @@ function CorrectionState = local_correction_state(RTConfig, CTFInfo)
 CorrectionState = struct();
 CorrectionState.AppliedChannelGains = false;
 CorrectionState.AppliedMegRefCorrection = false;
-CorrectionState.RemovedBlockMean = false;
+CorrectionState.RemovedBlockMean = RTConfig.Source.CTF.RemoveBlockMean;
 CorrectionState.AppliedProjector = false;
+CorrectionState.HasCTFRes4 = CTFInfo.HasCTFRes4;
 CorrectionState.RequiresMarcConfirmation = RTConfig.Source.CTF.RequireMarcConfirmation;
 CorrectionState.MarcConfirmed = RTConfig.Source.CTF.MarcConfirmed;
 CorrectionState.CorrectionOrder = RTConfig.Source.CTF.CorrectionOrder;
@@ -102,12 +117,6 @@ if CorrectionState.RequiresMarcConfirmation && ~CorrectionState.MarcConfirmed
     CorrectionState.Messages{end+1} = ...
         'Candidate CTF correction order requires Marc confirmation before claiming Benjamin equivalence.';
 end
-end
-
-function hashValue = local_header_hash(Header)
-% Create a small deterministic audit fingerprint for the live header.
-hashValue = sprintf('fs_%0.12g_nch_%d_ns_%d', ...
-    Header.Fs, Header.NChannels, round(Header.NSamples));
 end
 
 function textValue = local_text(value)
@@ -122,5 +131,14 @@ elseif isstring(value)
     textValue = char(value);
 else
     textValue = '<non-scalar>';
+end
+end
+
+function value = local_field(S, fieldName, defaultValue)
+% Read optional field.
+if isstruct(S) && isfield(S, fieldName)
+    value = S.(fieldName);
+else
+    value = defaultValue;
 end
 end

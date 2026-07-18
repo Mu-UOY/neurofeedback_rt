@@ -21,6 +21,7 @@ CorrectionInfo.AppliedChannelGains = false;
 CorrectionInfo.AppliedMegRefCorrection = false;
 CorrectionInfo.RemovedBlockMean = false;
 CorrectionInfo.AppliedProjector = false;
+CorrectionInfo.HasCTFRes4 = local_nested_field(Source, {'CTFInfo','HasCTFRes4'}, false);
 CorrectionInfo.InputNChannels = size(Xraw, 1);
 CorrectionInfo.OutputNChannels = size(X, 1);
 CorrectionInfo.InputChannelNames = local_field(Source, 'ChannelNames', {});
@@ -91,4 +92,17 @@ if isstruct(S) && isfield(S, fieldName)
 else
     value = defaultValue;
 end
+end
+
+function value = local_nested_field(S, path, defaultValue)
+% Read optional nested struct field.
+value = defaultValue;
+cursor = S;
+for iPath = 1:numel(path)
+    if ~isstruct(cursor) || ~isfield(cursor, path{iPath})
+        return;
+    end
+    cursor = cursor.(path{iPath});
+end
+value = cursor;
 end

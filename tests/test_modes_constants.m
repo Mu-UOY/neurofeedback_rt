@@ -48,5 +48,9 @@ assert(strcmp(Modes.TrialStop.Manual, 'manual'));
 assert(strcmp(Modes.TrialStop.ManualOrSuccess, 'manual_or_success'));
 assert(strcmp(Modes.TrialStop.FixedDuration, 'fixed_duration'));
 assert(strcmp(Modes.StopReason.HardFailsafe, 'hard_failsafe'));
+assert(strcmp(Modes.StopReason.Error, 'error'));
+assert(strcmp(Modes.StopReason.Timeout, 'timeout'));
+assert(strcmp(Modes.StopReason.StopFile, 'stop_file'));
+assert(strcmp(Modes.StopReason.CompletedUnknown, 'completed_unknown'));
 
 end

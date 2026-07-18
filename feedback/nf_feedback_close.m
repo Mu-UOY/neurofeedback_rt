@@ -29,9 +29,12 @@ end
 % Cleanup must tolerate stale or partially initialized PTB handles.
 if strcmp(backend, 'psychtoolbox')
     try
-        if isfield(Feedback, 'WindowPtr') && ~isempty(Feedback.WindowPtr) && ...
-                (exist('Screen', 'file') ~= 0 || exist('Screen', 'builtin') ~= 0)
-            Screen('Close', Feedback.WindowPtr);
+        if isfield(Feedback, 'WindowPtr') && ~isempty(Feedback.WindowPtr)
+            if isfield(Feedback, 'ScreenFcn') && isa(Feedback.ScreenFcn, 'function_handle')
+                Feedback.ScreenFcn('Close', Feedback.WindowPtr);
+            elseif exist('Screen', 'file') ~= 0 || exist('Screen', 'builtin') ~= 0
+                Screen('Close', Feedback.WindowPtr);
+            end
         end
     catch
     end

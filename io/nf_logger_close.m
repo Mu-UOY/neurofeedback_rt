@@ -123,6 +123,9 @@ TimeoutFlag = local_logical_column(ChunkMeta, 'TimeoutFlag');
 RuntimeSecs = local_numeric_column(ChunkMeta, 'RuntimeSecs');
 SourceMode = local_text_column(ChunkMeta, 'SourceMode');
 ReadHeaderNSamples = local_numeric_column(ChunkMeta, 'ReadHeaderNSamples');
+FieldTripReadStart = local_numeric_column(ChunkMeta, 'FieldTripReadStart');
+FieldTripReadStop = local_numeric_column(ChunkMeta, 'FieldTripReadStop');
+IndexingMode = local_text_column(ChunkMeta, 'IndexingMode');
 CorrectionSummary = repmat({''}, n, 1);
 for iRow = 1:n
     if isfield(ChunkMeta(iRow), 'CorrectionInfo') && ...
@@ -134,7 +137,8 @@ end
 T = table(RunID, Phase, ChunkIndex, StartSample, StopSample, SampleIndex, ...
     NSamples, NChannels, ReadStartTime, ReadEndTime, ProcessingStartTime, ...
     ProcessingEndTime, DroppedChunkFlag, GapBeforeChunkFlag, TimeoutFlag, ...
-    RuntimeSecs, SourceMode, ReadHeaderNSamples, CorrectionSummary);
+    RuntimeSecs, SourceMode, ReadHeaderNSamples, FieldTripReadStart, ...
+    FieldTripReadStop, IndexingMode, CorrectionSummary);
 end
 
 function column = local_text_column(S, fieldName)

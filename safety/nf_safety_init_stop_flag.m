@@ -20,9 +20,12 @@ Safety.Phase = char(phase);
 Safety.StartTime = local_now_text();
 Safety.StartTic = tic;
 Safety.MaxDurationSeconds = local_max_duration(RTConfig, Safety.Phase);
+Safety.UseMaxDurationFailsafe = local_get_logical(RTConfig, {'Safety','UseMaxDurationFailsafe'}, true);
 Safety.EnableKeyboardStop = local_get_logical(RTConfig, {'Safety','EnableKeyboardStop'}, true);
 Safety.StopKey = local_get_text(RTConfig, {'Safety','StopKey'}, 'ESCAPE');
 Safety.SecondaryStopKey = local_get_text(RTConfig, {'Safety','SecondaryStopKey'}, 'q');
+Safety.EnableStopFile = local_get_logical(RTConfig, {'Safety','EnableStopFile'}, false);
+Safety.StopFilePath = local_get_text(RTConfig, {'Safety','StopFilePath'}, '');
 Safety.StopRequested = false;
 Safety.StopReason = '';
 
@@ -44,8 +47,11 @@ switch char(phase)
     case 'resting'
         value = local_first_numeric(RTConfig, {{'Protocol','DurationSeconds','Resting'}});
 
-    case 'trial'
+    case {'trial','live_trial'}
         value = local_first_numeric(RTConfig, {{'Protocol','Trial','MaxFailsafeSeconds'}});
+
+    case 'live_resting'
+        value = local_first_numeric(RTConfig, {{'Protocol','DurationSeconds','Resting'}});
 
     otherwise
         value = Inf;

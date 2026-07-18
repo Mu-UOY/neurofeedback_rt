@@ -69,6 +69,9 @@ end
 if RTConfig.TargetBand(2) >= RTConfig.Fs / 2
     error('RTConfig.TargetBand upper edge must be below Nyquist.');
 end
+if isfield(RTConfig, 'TargetBandLabel')
+    local_check_optional_text(RTConfig.TargetBandLabel, 'RTConfig.TargetBandLabel');
+end
 
 %% ===== CHECK FILTER CONFIGURATION =====
 % Only explicitly supported filter implementations are accepted.
@@ -311,7 +314,9 @@ end
 %% ===== CHECK REQUIRED LIVE SECTIONS =====
 % These structs are explicit audit fields for later live-room logs.
 requiredSections = {'Internal','Session','MockLive','Protocol','Logging', ...
-    'LiveDryRun','LiveChunkSmokeTest','LiveRTDryRun','Safety','Comm'};
+    'MEGRoom','LiveDryRun','LiveChunkSmokeTest','LiveRTDryRun', ...
+    'LiveSelfTest','LiveResting','LiveTrial','Safety','Comm','PhaseRunner', ...
+    'DevelopmentSession'};
 for iField = 1:numel(requiredSections)
     fieldName = requiredSections{iField};
     if ~isfield(RTConfig, fieldName) || ~isstruct(RTConfig.(fieldName))
@@ -330,7 +335,8 @@ allowedSessions = { ...
     Modes.Session.LiveRTDryRun, ...
     Modes.Session.LiveSelfTest, ...
     Modes.Session.LiveResting, ...
-    Modes.Session.LiveTrial};
+    Modes.Session.LiveTrial, ...
+    Modes.Session.DevelopmentFullChain};
 if ~isfield(RTConfig.Session, 'Mode') || ~ismember(char(RTConfig.Session.Mode), allowedSessions)
     error('RTConfig.Session.Mode must be one of: %s.', strjoin(allowedSessions, ', '));
 end
@@ -366,7 +372,8 @@ local_check_cell_array(RTConfig.Source.Benjamin.WiringEvidenceFiles, ...
 fieldTripFields = {'Host','Port','TimeoutMs','BufferMPath','FieldTripRoot', ...
     'RequiredBufferRoot','AllowAlreadyOnPathBuffer','AllowMatlabToolboxBuffer', ...
     'UseBrainstormPluginPaths','UseCTFRes4FromHeader','RequireCTFRes4', ...
-    'TestBufferFcn','SettingOrigin'};
+    'AfterManualStartBacklogPolicy','BufferResetPolicy','StreamRole', ...
+    'TestBufferFcn','SettingOrigin','HeaderPollSeconds'};
 for iField = 1:numel(fieldTripFields)
     local_require_field(RTConfig.Source.FieldTrip, fieldTripFields(iField), ...
         ['RTConfig.Source.FieldTrip.' fieldTripFields{iField}]);
@@ -396,6 +403,8 @@ else
 end
 
 local_check_positive_numeric(RTConfig.Source.FieldTrip.TimeoutMs, 'RTConfig.Source.FieldTrip.TimeoutMs');
+local_check_positive_numeric(RTConfig.Source.FieldTrip.HeaderPollSeconds, ...
+    'RTConfig.Source.FieldTrip.HeaderPollSeconds');
 local_check_optional_text(RTConfig.Source.FieldTrip.BufferMPath, ...
     'RTConfig.Source.FieldTrip.BufferMPath');
 local_check_optional_text(RTConfig.Source.FieldTrip.FieldTripRoot, ...
@@ -410,6 +419,23 @@ local_check_scalar_logical(RTConfig.Source.FieldTrip.UseBrainstormPluginPaths, .
     'RTConfig.Source.FieldTrip.UseBrainstormPluginPaths');
 local_check_scalar_logical(RTConfig.Source.FieldTrip.UseCTFRes4FromHeader, ...
     'RTConfig.Source.FieldTrip.UseCTFRes4FromHeader');
+allowedBacklogPolicies = {Modes.BufferBacklog.DiscardAccumulated, ...
+    Modes.BufferBacklog.PreserveCursor};
+if ~ismember(char(RTConfig.Source.FieldTrip.AfterManualStartBacklogPolicy), allowedBacklogPolicies)
+    error('RTConfig.Source.FieldTrip.AfterManualStartBacklogPolicy must be one of: %s.', ...
+        strjoin(allowedBacklogPolicies, ', '));
+end
+allowedResetPolicies = {Modes.BufferResetPolicy.Error, Modes.BufferResetPolicy.ResyncToCurrentEnd};
+if ~ismember(char(RTConfig.Source.FieldTrip.BufferResetPolicy), allowedResetPolicies)
+    error('RTConfig.Source.FieldTrip.BufferResetPolicy must be one of: %s.', ...
+        strjoin(allowedResetPolicies, ', '));
+end
+allowedStreamRoles = {Modes.StreamRole.LocalReplay, Modes.StreamRole.LiveMEG, ...
+    Modes.StreamRole.TestHook, Modes.StreamRole.Unknown};
+if ~ismember(char(RTConfig.Source.FieldTrip.StreamRole), allowedStreamRoles)
+    error('RTConfig.Source.FieldTrip.StreamRole must be one of: %s.', ...
+        strjoin(allowedStreamRoles, ', '));
+end
 local_check_setting_origin_fields(RTConfig.Source.FieldTrip.SettingOrigin);
 if isFinalized
     local_check_scalar_logical(RTConfig.Source.FieldTrip.RequireCTFRes4, ...
@@ -541,17 +567,21 @@ end
 %% ===== CHECK FEEDBACK CONFIG FIELDS =====
 % Feedback setup itself is intentionally deferred to later steps.
 if ~isfield(RTConfig.Feedback, 'RequirePsychtoolboxForLive') || ...
-        ~isfield(RTConfig.Feedback, 'AllowDebugPlotFallback')
+        ~isfield(RTConfig.Feedback, 'AllowDebugPlotFallback') || ...
+        ~isfield(RTConfig.Feedback, 'Backend')
     error('Live/mock-live feedback flags are required.');
 end
 local_check_scalar_logical(RTConfig.Feedback.RequirePsychtoolboxForLive, ...
     'RTConfig.Feedback.RequirePsychtoolboxForLive');
 local_check_scalar_logical(RTConfig.Feedback.AllowDebugPlotFallback, ...
     'RTConfig.Feedback.AllowDebugPlotFallback');
+local_check_feedback_backend_fields(RTConfig, Modes);
 local_check_feedback_circle_fields(RTConfig);
 
 %% ===== CHECK PROTOCOL, LOGGING, MOCK-LIVE, SAFETY =====
 % These fields are explicit configuration only in Step 3A-0a.
+local_check_meg_room_fields(RTConfig);
+local_check_protocol_live_fields(RTConfig, Modes);
 allowedStopRules = {Modes.TrialStop.Manual, Modes.TrialStop.ManualOrSuccess, ...
     Modes.TrialStop.FixedDuration};
 if ~isfield(RTConfig.Protocol, 'Trial') || ~isstruct(RTConfig.Protocol.Trial)
@@ -574,14 +604,24 @@ if isfield(RTConfig.Safety, 'MaxDurationSeconds') && ...
     error(['Do not maintain divergent trial failsafe fields. ' ...
         'Use Protocol.Trial.MaxFailsafeSeconds as source of truth.']);
 end
+if isfield(RTConfig, 'LiveTrial') && isfield(RTConfig.LiveTrial, 'MaxFailsafeSeconds') && ...
+        ~isempty(RTConfig.LiveTrial.MaxFailsafeSeconds) && ...
+        RTConfig.LiveTrial.MaxFailsafeSeconds ~= RTConfig.Protocol.Trial.MaxFailsafeSeconds
+    error(['RTConfig.LiveTrial.MaxFailsafeSeconds is a derived mirror only. ' ...
+        'Use Protocol.Trial.MaxFailsafeSeconds as source of truth.']);
+end
 
 local_check_mock_live_fields(RTConfig);
 local_check_logging_fields(RTConfig);
 local_check_live_dry_run_fields(RTConfig);
 local_check_live_chunk_smoke_test_fields(RTConfig);
 local_check_live_rt_dry_run_fields(RTConfig);
+local_check_live_self_test_fields(RTConfig);
+local_check_live_resting_fields(RTConfig);
+local_check_live_trial_fields(RTConfig, Modes);
 local_check_safety_fields(RTConfig);
 local_check_scalar_logical(RTConfig.Comm.EnableTriggers, 'RTConfig.Comm.EnableTriggers');
+local_check_development_session(RTConfig, Modes, isFinalized);
 
 if isFinalized
     if ~isfield(RTConfig.Paths, 'ProjectRoot') || isempty(RTConfig.Paths.ProjectRoot) || ...
@@ -634,13 +674,291 @@ if ~isfield(RTConfig.Spatial, 'Fallback') || ~isstruct(RTConfig.Spatial.Fallback
 end
 fallback = RTConfig.Spatial.Fallback;
 local_require_field(fallback, {'Type'}, 'RTConfig.Spatial.Fallback.Type');
-allowedFallbackTypes = {'single_channel','channel_average'};
+allowedFallbackTypes = {'single_channel','channel_average', ...
+    nf_modes().Spatial.FallbackType.RepresentativeDense};
 if ~ismember(char(fallback.Type), allowedFallbackTypes)
     error('RTConfig.Spatial.Fallback.Type must be one of: %s.', strjoin(allowedFallbackTypes, ', '));
 end
 local_check_positive_integer(fallback.ChannelIndex, 'RTConfig.Spatial.Fallback.ChannelIndex');
 local_check_scalar_logical(fallback.NormalizeWeights, 'RTConfig.Spatial.Fallback.NormalizeWeights');
 local_check_scalar_logical(fallback.AllowIfNoIPSMatrix, 'RTConfig.Spatial.Fallback.AllowIfNoIPSMatrix');
+end
+
+function local_check_development_session(RTConfig, Modes, isFinalized)
+% Validate the isolated Step 0 development contract.
+enabled = RTConfig.DevelopmentSession.Enabled;
+local_check_scalar_logical(enabled, 'RTConfig.DevelopmentSession.Enabled');
+owners = {Modes.PhaseRunnerOwner.Internal, Modes.PhaseRunnerOwner.External};
+manualOwner = char(RTConfig.PhaseRunner.ManualStartOwner);
+resyncOwner = char(RTConfig.PhaseRunner.ResyncOwner);
+if ~ismember(manualOwner, owners) || ~ismember(resyncOwner, owners)
+    error('PhaseRunner owners must be internal or external.');
+end
+if strcmp(manualOwner, Modes.PhaseRunnerOwner.Internal) && ...
+        strcmp(resyncOwner, Modes.PhaseRunnerOwner.External)
+    error('Internal manual-start ownership cannot use external resync ownership.');
+end
+
+if ~enabled
+    if ~isempty(RTConfig.DevelopmentSession.DisplayMode)
+        error('Disabled DevelopmentSession requires an empty DisplayMode.');
+    end
+    hooks = RTConfig.DevelopmentSession.TestHooks;
+    local_check_development_hook_fields(hooks);
+    if hooks.Enabled || ~strcmp(hooks.FailurePoint, Modes.DevelopmentFailure.None) || ...
+            ~local_development_hook_functions_empty(hooks) || ...
+            ~local_manual_start_hook_durations_are_zero(hooks)
+        error('Disabled DevelopmentSession requires all development test hooks to be inactive.');
+    end
+    if ~strcmp(manualOwner, Modes.PhaseRunnerOwner.Internal) || ...
+            ~strcmp(resyncOwner, Modes.PhaseRunnerOwner.Internal)
+        error('External phase ownership is allowed only in Step 0 development.');
+    end
+    return;
+end
+
+if ~RTConfig.Session.DevelopmentOnly || RTConfig.Session.ProductionEquivalent
+    error('Step 0 must be development-only and non-production-equivalent.');
+end
+allowedStep0Sessions = {Modes.Session.DevelopmentFullChain, ...
+    Modes.Session.LiveResting, Modes.Session.LiveTrial};
+if ~ismember(char(RTConfig.Session.Mode), allowedStep0Sessions)
+    error('Enabled Step 0 config has an invalid session mode.');
+end
+input = RTConfig.DevelopmentSession.Input;
+if ~strcmp(input.Policy, Modes.DevelopmentInput.MEGPlusMEGReference)
+    error('Step 0 input policy must be MEG plus MEG reference.');
+end
+local_check_positive_integer(input.PrimaryMEGChannelCount, 'Step 0 primary channel count');
+local_check_positive_integer(input.ReferenceMEGChannelCount, 'Step 0 reference channel count');
+if input.TotalChannelCount ~= input.PrimaryMEGChannelCount + input.ReferenceMEGChannelCount
+    error('Step 0 total channel count must equal primary plus reference channels.');
+end
+if input.IncludeEEG || input.IncludeAnalog || input.IncludeDigital
+    error('Step 0 provisional input excludes EEG, analog, and digital channels.');
+end
+primaryNames = nf_ctf275_primary_channel_names();
+referenceNames = nf_step0_provisional_reference_channel_names(RTConfig);
+allNames = [primaryNames, referenceNames];
+if numel(primaryNames) ~= input.PrimaryMEGChannelCount || ...
+        numel(referenceNames) ~= input.ReferenceMEGChannelCount || ...
+        numel(allNames) ~= input.TotalChannelCount || numel(unique(allNames)) ~= numel(allNames)
+    error('Step 0 channel labels do not match the configured unique channel layout.');
+end
+if ~input.ReferenceLabelsAreProvisional
+    error('Step 0 reference labels must remain explicitly provisional.');
+end
+
+matrix = RTConfig.DevelopmentSession.Matrix;
+if ~strcmp(RTConfig.Spatial.Mode, Modes.Spatial.CombinedMatrix) || ...
+        ~strcmp(RTConfig.Spatial.MatrixSource, Modes.Spatial.MatrixSource.TechnicalFallback) || ...
+        ~strcmp(RTConfig.Spatial.Fallback.Type, Modes.Spatial.FallbackType.RepresentativeDense)
+    error('Step 0 requires the representative technical combined-matrix path.');
+end
+local_check_positive_integer(matrix.OutputRowUpperBound, 'Step 0 output rows');
+if ~isscalar(matrix.Density) || ~isfinite(matrix.Density) || matrix.Density <= 0 || matrix.Density > 1
+    error('Step 0 matrix density must be in (0,1].');
+end
+if ~strcmp(matrix.NumericClass, 'double') || ...
+        ~strcmp(matrix.Orientation, Modes.MatrixOrientation.OutputByInput)
+    error('Step 0 matrix class/orientation contract is invalid.');
+end
+local_check_nonnegative_integer(matrix.RandomSeed, 'Step 0 matrix seed');
+source = RTConfig.DevelopmentSession.Source;
+local_check_nonnegative_integer(source.InitialAvailableChunks, ...
+    'Step 0 initial available chunks');
+if isFinalized && source.InitialAvailableSamples ~= ...
+        source.InitialAvailableChunks .* RTConfig.ChunkSamples
+    error('Step 0 initial available sample derivation is inconsistent.');
+end
+if source.CapacitySamples ~= ceil(source.CapacitySeconds .* RTConfig.Fs)
+    error('Step 0 source capacity sample derivation is inconsistent.');
+end
+positiveSourceFields = {'ThetaFrequencyHz','ThetaAmplitude', ...
+    'AmplitudeModulationHz','ReferenceAmplitudeScale'};
+for iField = 1:numel(positiveSourceFields)
+    fieldName = positiveSourceFields{iField};
+    local_check_positive_numeric(source.(fieldName), ['Step 0 source ' fieldName]);
+end
+if ~isscalar(source.NoiseStd) || ~isfinite(source.NoiseStd) || source.NoiseStd < 0
+    error('Step 0 source NoiseStd must be finite and nonnegative.');
+end
+local_check_nonnegative_integer(source.RandomSeed, 'Step 0 source seed');
+local_check_positive_numeric(source.WaitPollSeconds, 'Step 0 producer wait poll seconds');
+local_check_positive_numeric(source.ReadinessTimeoutSeconds, ...
+    'Step 0 source readiness timeout seconds');
+local_check_positive_integer(source.ReadinessAdvanceChunks, ...
+    'Step 0 source readiness advance chunks');
+if isFinalized && source.ReadinessAdvanceSamples ~= ...
+        source.ReadinessAdvanceChunks .* RTConfig.ChunkSamples
+    error('Step 0 readiness sample derivation is inconsistent.');
+end
+
+transition = RTConfig.DevelopmentSession.Transition;
+if ~isscalar(transition.MaxPauseSeconds) || ~isfinite(transition.MaxPauseSeconds) || ...
+        transition.MaxPauseSeconds <= 0
+    error('Step 0 transition maximum must be finite and positive.');
+end
+local_check_nonnegative_integer(transition.TestAdvanceChunks, 'Step 0 transition advance chunks');
+local_check_positive_numeric(transition.TimeoutBoundaryDeltaSeconds, ...
+    'Step 0 transition timeout boundary delta');
+if isFinalized && transition.TestAdvanceSamples ~= transition.TestAdvanceChunks .* RTConfig.ChunkSamples
+    error('Step 0 transition sample derivation is inconsistent.');
+end
+minimumCapacity = RTConfig.LiveResting.DurationSeconds + transition.MaxPauseSeconds + ...
+    RTConfig.PowerWindowSeconds + RTConfig.ChunkSeconds;
+if RTConfig.DevelopmentSession.Source.CapacitySeconds <= minimumCapacity
+    error('Step 0 source capacity is too short for the configured lifecycle.');
+end
+
+displayMode = char(RTConfig.DevelopmentSession.DisplayMode);
+isReal = strcmp(displayMode, Modes.DevelopmentDisplay.RealPsychtoolbox);
+isHeadless = strcmp(displayMode, Modes.DevelopmentDisplay.HeadlessPsychtoolboxTest);
+if ~(isReal || isHeadless)
+    error('Step 0 requires an explicit real or headless Psychtoolbox display mode.');
+end
+if ~strcmp(RTConfig.Feedback.Backend, Modes.FeedbackBackend.Psychtoolbox) || ...
+        RTConfig.Feedback.AllowDebugPlotFallback
+    error('Step 0 must use the Psychtoolbox backend without DebugPlot fallback.');
+end
+flipWhen = RTConfig.DevelopmentSession.Feedback.FlipWhen;
+if ~isnumeric(flipWhen) || ~isscalar(flipWhen) || ~isfinite(flipWhen)
+    error('RTConfig.DevelopmentSession.Feedback.FlipWhen must be a finite numeric scalar.');
+end
+hooks = RTConfig.DevelopmentSession.TestHooks;
+local_check_development_hook_fields(hooks);
+allowedFailures = struct2cell(Modes.DevelopmentFailure);
+if ~ismember(char(hooks.FailurePoint), allowedFailures)
+    error('Unknown Step 0 failure point.');
+end
+local_check_positive_integer(hooks.FailureOccurrence, 'Step 0 failure occurrence');
+strictHeadless = nf_is_strict_step0_headless_contract(RTConfig);
+if isReal && (hooks.Enabled || ...
+        ~strcmp(hooks.FailurePoint, Modes.DevelopmentFailure.None) || ...
+        ~local_development_hook_functions_empty(hooks) || ...
+        ~local_manual_start_hook_durations_are_zero(hooks))
+    error('Real Step 0 display cannot enable or inject development test hooks.');
+end
+if isReal && RTConfig.DevelopmentSession.Feedback.SkipSyncTests
+    error('Real Step 0 display must keep Psychtoolbox sync tests enabled.');
+end
+if isHeadless && ~strictHeadless
+    error('Headless Step 0 requires the complete isolated test-hook contract.');
+end
+if (~isempty(hooks.SafetyShutdownFcn) || ~isempty(hooks.PauseFcn)) && ~strictHeadless
+    error('Step 0 dependency seams require the complete isolated headless contract.');
+end
+if hooks.Enabled && ~strcmp(hooks.FailurePoint, Modes.DevelopmentFailure.None) && ...
+        ~strictHeadless
+    error('Active Step 0 failure hooks require the isolated headless test contract.');
+end
+
+outputs = RTConfig.DevelopmentSession.Output;
+names = {outputs.SuccessMatFilename, outputs.SuccessCsvFilename, ...
+    outputs.PartialMatFilename, outputs.PartialCsvFilename, outputs.TimelineFilename};
+for iName = 1:numel(names)
+    [folder, base, ext] = fileparts(char(names{iName}));
+    if ~isempty(folder) || isempty(base) || isempty(ext)
+        error('Step 0 output names must be nonempty base filenames.');
+    end
+end
+if numel(unique(names)) ~= numel(names)
+    error('Step 0 success and partial output filenames must not collide.');
+end
+end
+
+function local_check_development_hook_fields(hooks)
+% Validate canonical Step 0 hook fields without activating them.
+required = {'Enabled','FailurePoint','FailureOccurrence', ...
+    'ManualStartWaitDurationSeconds','ScreenFcn','TimeFcn', ...
+    'SafetyShutdownFcn','PauseFcn'};
+for iField = 1:numel(required)
+    local_require_field(hooks, required(iField), ...
+        ['RTConfig.DevelopmentSession.TestHooks.' required{iField}]);
+end
+local_check_scalar_logical(hooks.Enabled, ...
+    'RTConfig.DevelopmentSession.TestHooks.Enabled');
+functionFields = {'ScreenFcn','TimeFcn','SafetyShutdownFcn','PauseFcn'};
+for iField = 1:numel(functionFields)
+    value = hooks.(functionFields{iField});
+    if ~(isempty(value) || (isa(value, 'function_handle') && isscalar(value)))
+        error('RTConfig.DevelopmentSession.TestHooks.%s must be empty or a scalar function handle.', ...
+            functionFields{iField});
+    end
+end
+durationFields = {'Resting','Transition','Trial'};
+for iField = 1:numel(durationFields)
+    local_require_field(hooks.ManualStartWaitDurationSeconds, durationFields(iField), ...
+        ['RTConfig.DevelopmentSession.TestHooks.ManualStartWaitDurationSeconds.' ...
+        durationFields{iField}]);
+    value = hooks.ManualStartWaitDurationSeconds.(durationFields{iField});
+    if ~isnumeric(value) || ~isscalar(value) || ~isfinite(value) || value < 0
+        error('Step 0 logical manual-start durations must be finite and nonnegative.');
+    end
+end
+end
+
+function tf = local_development_hook_functions_empty(hooks)
+tf = isempty(hooks.ScreenFcn) && isempty(hooks.TimeFcn) && ...
+    isempty(hooks.SafetyShutdownFcn) && isempty(hooks.PauseFcn);
+end
+
+function tf = local_manual_start_hook_durations_are_zero(hooks)
+durations = hooks.ManualStartWaitDurationSeconds;
+tf = durations.Resting == 0 && durations.Transition == 0 && durations.Trial == 0;
+end
+
+function local_check_feedback_backend_fields(RTConfig, Modes)
+% Validate feedback backend choices without opening a display.
+allowedBackends = { ...
+    Modes.FeedbackBackend.None, ...
+    Modes.FeedbackBackend.Psychtoolbox, ...
+    Modes.FeedbackBackend.DebugPlot, ...
+    Modes.FeedbackBackend.DebugValue};
+if ~ismember(char(RTConfig.Feedback.Backend), allowedBackends)
+    error('RTConfig.Feedback.Backend must be one of: %s.', strjoin(allowedBackends, ', '));
+end
+
+mode = char(RTConfig.Feedback.Mode);
+backend = char(RTConfig.Feedback.Backend);
+if strcmp(mode, Modes.Feedback.None)
+    % Mode=None is a valid transient override for resting regardless of backend.
+elseif strcmp(mode, Modes.Feedback.LocalCircle)
+    if strcmp(backend, Modes.FeedbackBackend.None)
+        error('LocalCircle feedback cannot use Backend=None.');
+    end
+elseif strcmp(mode, Modes.Feedback.DebugPlot)
+    if ~strcmp(backend, Modes.FeedbackBackend.DebugPlot)
+        error('DebugPlot feedback requires Backend=DebugPlot.');
+    end
+elseif strcmp(mode, Modes.Feedback.DebugValue)
+    if ~(strcmp(backend, Modes.FeedbackBackend.DebugValue) || ...
+            strcmp(backend, Modes.FeedbackBackend.None))
+        error('DebugValue feedback requires Backend=DebugValue or Backend=None.');
+    end
+end
+
+if ~isnumeric(RTConfig.Feedback.LatencyBudgetMs) || ...
+        ~isscalar(RTConfig.Feedback.LatencyBudgetMs) || ...
+        ~isfinite(RTConfig.Feedback.LatencyBudgetMs) || ...
+        RTConfig.Feedback.LatencyBudgetMs < 0
+    error('RTConfig.Feedback.LatencyBudgetMs must be a finite nonnegative numeric scalar.');
+end
+local_check_scalar_logical(RTConfig.Feedback.WarnOnLatencyBudgetExceeded, ...
+    'RTConfig.Feedback.WarnOnLatencyBudgetExceeded');
+local_check_scalar_logical(RTConfig.Feedback.FailOnLatencyBudgetExceeded, ...
+    'RTConfig.Feedback.FailOnLatencyBudgetExceeded');
+local_check_positive_integer(RTConfig.Feedback.MaxConsecutiveLatencyWarnings, ...
+    'RTConfig.Feedback.MaxConsecutiveLatencyWarnings');
+local_require_field(RTConfig.Feedback, {'LatencySummary'}, ...
+    'RTConfig.Feedback.LatencySummary');
+local_require_field(RTConfig.Feedback.LatencySummary, {'Percentile'}, ...
+    'RTConfig.Feedback.LatencySummary.Percentile');
+percentile = RTConfig.Feedback.LatencySummary.Percentile;
+if ~isnumeric(percentile) || ~isscalar(percentile) || ~isfinite(percentile) || ...
+        percentile <= 0 || percentile >= 100
+    error('RTConfig.Feedback.LatencySummary.Percentile must be in (0, 100).');
+end
 end
 
 function local_check_feedback_circle_fields(RTConfig)
@@ -651,7 +969,9 @@ end
 circle = RTConfig.Feedback.Circle;
 requiredFields = {'Color','BackgroundColor','OuterCircleColor','ZMin','ZMax', ...
     'MinRadiusPx','MaxRadiusPx','UseAreaProportionalMapping','VisualAlpha', ...
-    'ShowOuterCircle','ShowFixation','InstructionText','HideMeaningFromParticipant'};
+    'ShowOuterCircle','ShowFixation','InstructionText','HideMeaningFromParticipant', ...
+    'DebugAxesMarginScale','FixationMinHalfWidthPx', ...
+    'FixationHalfWidthFraction','OuterCircleLineWidthPx','FixationLineWidthPx'};
 for iField = 1:numel(requiredFields)
     fieldName = requiredFields{iField};
     local_require_field(circle, {fieldName}, ['RTConfig.Feedback.Circle.' fieldName]);
@@ -675,6 +995,78 @@ local_check_scalar_logical(circle.ShowOuterCircle, 'RTConfig.Feedback.Circle.Sho
 local_check_scalar_logical(circle.ShowFixation, 'RTConfig.Feedback.Circle.ShowFixation');
 local_check_scalar_logical(circle.HideMeaningFromParticipant, ...
     'RTConfig.Feedback.Circle.HideMeaningFromParticipant');
+if ~isnumeric(circle.DebugAxesMarginScale) || ...
+        ~isscalar(circle.DebugAxesMarginScale) || ...
+        ~isfinite(circle.DebugAxesMarginScale) || circle.DebugAxesMarginScale <= 1
+    error('RTConfig.Feedback.Circle.DebugAxesMarginScale must be greater than 1.');
+end
+if ~isnumeric(circle.FixationMinHalfWidthPx) || ...
+        ~isscalar(circle.FixationMinHalfWidthPx) || ...
+        ~isfinite(circle.FixationMinHalfWidthPx) || circle.FixationMinHalfWidthPx < 0
+    error('RTConfig.Feedback.Circle.FixationMinHalfWidthPx must be finite and nonnegative.');
+end
+if ~isnumeric(circle.FixationHalfWidthFraction) || ...
+        ~isscalar(circle.FixationHalfWidthFraction) || ...
+        ~isfinite(circle.FixationHalfWidthFraction) || ...
+        circle.FixationHalfWidthFraction <= 0 || circle.FixationHalfWidthFraction > 0.5
+    error('RTConfig.Feedback.Circle.FixationHalfWidthFraction must be in (0, 0.5].');
+end
+local_check_positive_numeric(circle.OuterCircleLineWidthPx, ...
+    'RTConfig.Feedback.Circle.OuterCircleLineWidthPx');
+local_check_positive_numeric(circle.FixationLineWidthPx, ...
+    'RTConfig.Feedback.Circle.FixationLineWidthPx');
+end
+
+function local_check_meg_room_fields(RTConfig)
+% Validate MEG-room audit fields and optional historical Ben metadata.
+textFields = {'SiteLabel','Operator','SubjectCode','SessionLabel','Notes','HostPresetLabel'};
+for iField = 1:numel(textFields)
+    fieldName = textFields{iField};
+    local_require_field(RTConfig.MEGRoom, {fieldName}, ['RTConfig.MEGRoom.' fieldName]);
+    local_check_optional_text(RTConfig.MEGRoom.(fieldName), ['RTConfig.MEGRoom.' fieldName]);
+end
+local_check_scalar_logical(RTConfig.MEGRoom.AllowHistoricalBenDefaults, ...
+    'RTConfig.MEGRoom.AllowHistoricalBenDefaults');
+local_require_field(RTConfig.MEGRoom, {'BenHistorical'}, ...
+    'RTConfig.MEGRoom.BenHistorical');
+local_check_nonempty_text(RTConfig.MEGRoom.BenHistorical.FTHost, ...
+    'RTConfig.MEGRoom.BenHistorical.FTHost');
+local_check_positive_integer(RTConfig.MEGRoom.BenHistorical.FTPort, ...
+    'RTConfig.MEGRoom.BenHistorical.FTPort');
+local_check_positive_numeric(RTConfig.MEGRoom.BenHistorical.BlockTimeMs, ...
+    'RTConfig.MEGRoom.BenHistorical.BlockTimeMs');
+end
+
+function local_check_protocol_live_fields(RTConfig, Modes)
+% Validate manual-start and live-trial success settings.
+local_check_scalar_logical(RTConfig.Protocol.RequireManualStart, ...
+    'RTConfig.Protocol.RequireManualStart');
+local_check_nonempty_text(RTConfig.Protocol.ManualStartPrompt, ...
+    'RTConfig.Protocol.ManualStartPrompt');
+local_check_scalar_logical(RTConfig.Protocol.AllowAutoStartForTestHook, ...
+    'RTConfig.Protocol.AllowAutoStartForTestHook');
+local_check_positive_numeric(RTConfig.Protocol.ManualStartPollSeconds, ...
+    'RTConfig.Protocol.ManualStartPollSeconds');
+
+success = RTConfig.Protocol.Trial.Success;
+local_check_scalar_logical(success.Enabled, ...
+    'RTConfig.Protocol.Trial.Success.Enabled');
+allowedSources = {'ZSmoothed','ZClipped','ZRaw'};
+if ~ismember(char(success.SourceField), allowedSources)
+    error('RTConfig.Protocol.Trial.Success.SourceField must be one of: %s.', ...
+        strjoin(allowedSources, ', '));
+end
+if ~isnumeric(success.Threshold) || ~isscalar(success.Threshold) || ~isfinite(success.Threshold)
+    error('RTConfig.Protocol.Trial.Success.Threshold must be a finite numeric scalar.');
+end
+local_check_positive_integer(success.RequiredConsecutiveValidUpdates, ...
+    'RTConfig.Protocol.Trial.Success.RequiredConsecutiveValidUpdates');
+
+allowedStopRules = {Modes.TrialStop.Manual, Modes.TrialStop.ManualOrSuccess, ...
+    Modes.TrialStop.FixedDuration};
+if ~ismember(char(RTConfig.Protocol.Trial.StopRule), allowedStopRules)
+    error('RTConfig.Protocol.Trial.StopRule must be one of: %s.', strjoin(allowedStopRules, ', '));
+end
 end
 
 function local_check_mock_live_fields(RTConfig)
@@ -762,16 +1154,90 @@ local_check_scalar_logical(RTConfig.LiveRTDryRun.SaveChunkMetadata, ...
     'RTConfig.LiveRTDryRun.SaveChunkMetadata');
 end
 
+function local_check_live_self_test_fields(RTConfig)
+% Live self-test settings are config-only gates around public runners.
+flags = {'RunPreflightDiagnostics','RunChannelCheck','RunChunkSmokeTest', ...
+    'RunRTDryRun','RequireRestingPass','RequireTrialStarted', ...
+    'RequireAtLeastOneFeedbackUpdate','SaveAudit','CloseFeedbackOnError'};
+for iFlag = 1:numel(flags)
+    fieldName = flags{iFlag};
+    local_check_scalar_logical(RTConfig.LiveSelfTest.(fieldName), ...
+        ['RTConfig.LiveSelfTest.' fieldName]);
+end
+end
+
+function local_check_live_resting_fields(RTConfig)
+% Live resting settings are validated without acquisition.
+local_check_positive_numeric(RTConfig.LiveResting.DurationSeconds, ...
+    'RTConfig.LiveResting.DurationSeconds');
+local_check_positive_integer(RTConfig.LiveResting.MinValidMeasures, ...
+    'RTConfig.LiveResting.MinValidMeasures');
+local_check_nonnegative_integer(RTConfig.LiveResting.MaxTimeouts, ...
+    'RTConfig.LiveResting.MaxTimeouts');
+local_check_scalar_logical(RTConfig.LiveResting.SaveMeasures, ...
+    'RTConfig.LiveResting.SaveMeasures');
+local_check_scalar_logical(RTConfig.LiveResting.SaveChunkMetadata, ...
+    'RTConfig.LiveResting.SaveChunkMetadata');
+local_check_positive_integer(RTConfig.LiveResting.SavePartialEveryNMeasures, ...
+    'RTConfig.LiveResting.SavePartialEveryNMeasures');
+end
+
+function local_check_live_trial_fields(RTConfig, Modes)
+% Live trial settings are validated without acquisition.
+allowedStopRules = {Modes.TrialStop.Manual, Modes.TrialStop.ManualOrSuccess, ...
+    Modes.TrialStop.FixedDuration};
+if ~ismember(char(RTConfig.LiveTrial.StopRule), allowedStopRules)
+    error('RTConfig.LiveTrial.StopRule must be one of: %s.', strjoin(allowedStopRules, ', '));
+end
+local_check_positive_numeric(RTConfig.LiveTrial.MaxFailsafeSeconds, ...
+    'RTConfig.LiveTrial.MaxFailsafeSeconds');
+if RTConfig.LiveTrial.MaxFailsafeSeconds < 15 * 60
+    error('RTConfig.LiveTrial.MaxFailsafeSeconds must be at least 15 minutes.');
+end
+if RTConfig.LiveTrial.MaxFailsafeSeconds ~= RTConfig.Protocol.Trial.MaxFailsafeSeconds
+    error(['RTConfig.LiveTrial.MaxFailsafeSeconds is a derived mirror only. ' ...
+        'Use Protocol.Trial.MaxFailsafeSeconds as source of truth.']);
+end
+local_check_nonnegative_integer(RTConfig.LiveTrial.MaxTimeouts, ...
+    'RTConfig.LiveTrial.MaxTimeouts');
+local_check_scalar_logical(RTConfig.LiveTrial.RequireAtLeastOneValidMeasure, ...
+    'RTConfig.LiveTrial.RequireAtLeastOneValidMeasure');
+local_check_scalar_logical(RTConfig.LiveTrial.RequireAtLeastOneFeedbackUpdate, ...
+    'RTConfig.LiveTrial.RequireAtLeastOneFeedbackUpdate');
+local_check_scalar_logical(RTConfig.LiveTrial.SaveMeasures, ...
+    'RTConfig.LiveTrial.SaveMeasures');
+local_check_scalar_logical(RTConfig.LiveTrial.SaveChunkMetadata, ...
+    'RTConfig.LiveTrial.SaveChunkMetadata');
+local_check_positive_integer(RTConfig.LiveTrial.SavePartialEveryNMeasures, ...
+    'RTConfig.LiveTrial.SavePartialEveryNMeasures');
+end
+
 function local_check_safety_fields(RTConfig)
 % Safety runtime helpers are not implemented here.
 local_check_scalar_logical(RTConfig.Safety.EnableKeyboardStop, ...
     'RTConfig.Safety.EnableKeyboardStop');
 local_check_scalar_logical(RTConfig.Safety.EnableStopFile, ...
     'RTConfig.Safety.EnableStopFile');
+if ~isfield(RTConfig.Safety, 'StopFilePath')
+    error('RTConfig.Safety.StopFilePath is required.');
+end
+if RTConfig.Safety.EnableStopFile
+    local_check_nonempty_text(RTConfig.Safety.StopFilePath, ...
+        'RTConfig.Safety.StopFilePath');
+else
+    local_check_optional_text(RTConfig.Safety.StopFilePath, ...
+        'RTConfig.Safety.StopFilePath');
+end
 local_check_scalar_logical(RTConfig.Safety.UseMaxDurationFailsafe, ...
     'RTConfig.Safety.UseMaxDurationFailsafe');
 local_check_positive_integer(RTConfig.Safety.MaxConsecutiveTimeouts, ...
     'RTConfig.Safety.MaxConsecutiveTimeouts');
+local_check_scalar_logical(RTConfig.Safety.ResetTimeoutCountOnValidChunk, ...
+    'RTConfig.Safety.ResetTimeoutCountOnValidChunk');
+local_check_scalar_logical(RTConfig.Safety.CountEmptyChunkAsTimeout, ...
+    'RTConfig.Safety.CountEmptyChunkAsTimeout');
+local_check_scalar_logical(RTConfig.Safety.CountRecoverableSourceTimeoutAsTimeout, ...
+    'RTConfig.Safety.CountRecoverableSourceTimeoutAsTimeout');
 local_check_scalar_string(RTConfig.Safety.StopKey, 'RTConfig.Safety.StopKey');
 local_check_scalar_string(RTConfig.Safety.SecondaryStopKey, ...
     'RTConfig.Safety.SecondaryStopKey');
@@ -858,8 +1324,8 @@ function local_check_setting_origin_fields(SettingOrigin)
 % Validate provenance labels separately from runtime connection values.
 requiredOrigins = {'Host','Port','BufferMPath','FieldTripRoot', ...
     'RequiredBufferRoot','UseBrainstormPluginPaths'};
-allowedOrigins = {'config','benjamin_code','test_hook', ...
-    'historical_unconfirmed','unresolved'};
+allowedOrigins = {'config','default_config','historical_ben','caller_override', ...
+    'benjamin_code','test_hook','historical_unconfirmed','unresolved'};
 for iOrigin = 1:numel(requiredOrigins)
     fieldName = requiredOrigins{iOrigin};
     local_require_field(SettingOrigin, {fieldName}, ...
@@ -915,9 +1381,14 @@ RTConfig = local_set_missing(RTConfig, {'Baseline','RequireConfigHashMatch'}, tr
 RTConfig = local_set_missing(RTConfig, {'Baseline','Path'}, '');
 
 RTConfig = local_set_missing(RTConfig, {'Feedback','Mode'}, 'none');
+RTConfig = local_set_missing(RTConfig, {'Feedback','Backend'}, 'none');
 RTConfig = local_set_missing(RTConfig, {'Feedback','UpdateEveryNValidMeasures'}, 1);
 RTConfig = local_set_missing(RTConfig, {'Feedback','MapSource'}, 'ZSmoothed');
 RTConfig = local_set_missing(RTConfig, {'Feedback','ClipRange'}, [-5 5]);
+RTConfig = local_set_missing(RTConfig, {'Feedback','LatencyBudgetMs'}, 25);
+RTConfig = local_set_missing(RTConfig, {'Feedback','WarnOnLatencyBudgetExceeded'}, true);
+RTConfig = local_set_missing(RTConfig, {'Feedback','FailOnLatencyBudgetExceeded'}, false);
+RTConfig = local_set_missing(RTConfig, {'Feedback','MaxConsecutiveLatencyWarnings'}, 5);
 
 RTConfig = local_set_missing(RTConfig, {'Analysis','DisplayMode'}, 'off');
 RTConfig = local_set_missing(RTConfig, {'Analysis','ReportRoot'}, fullfile('outputs', 'reports'));

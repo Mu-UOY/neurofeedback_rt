@@ -14,7 +14,7 @@ Feedback = local_empty_feedback(RTConfig);
 
 if ~isfield(RTConfig, 'Feedback') || ~isfield(RTConfig.Feedback, 'Mode')
     Feedback.Mode = Modes.Feedback.None;
-    Feedback.Backend = 'none';
+    Feedback.Backend = Modes.FeedbackBackend.None;
     return;
 end
 
@@ -24,7 +24,14 @@ Feedback.Mode = char(RTConfig.Feedback.Mode);
 % none/debug_value never open a window in this display layer.
 if strcmp(Feedback.Mode, Modes.Feedback.None) || ...
         strcmp(Feedback.Mode, Modes.Feedback.DebugValue)
-    Feedback.Backend = 'none';
+    Feedback.Backend = Modes.FeedbackBackend.None;
+    return;
+end
+
+%% ===== HANDLE EXPLICIT DEBUG-PLOT MODE =====
+% DebugPlot is an explicit test/debug backend and never requires PTB.
+if strcmp(Feedback.Mode, Modes.Feedback.DebugPlot)
+    Feedback = local_open_debug_plot(Feedback, RTConfig);
     return;
 end
 
@@ -38,9 +45,15 @@ sourceMode = local_get_nested_text(RTConfig, {'Source','Mode'}, '');
 requiresPTBLive = strcmp(sourceMode, Modes.Source.LiveFieldTrip) && ...
     local_get_nested_logical(RTConfig, {'Feedback','RequirePsychtoolboxForLive'}, false);
 allowDebugPlot = local_get_nested_logical(RTConfig, {'Feedback','AllowDebugPlotFallback'}, false);
-hasPTB = local_has_psychtoolbox();
+backend = local_get_nested_text(RTConfig, {'Feedback','Backend'}, '');
+hasPTB = local_has_psychtoolbox(RTConfig);
 
-if requiresPTBLive
+if strcmp(backend, Modes.FeedbackBackend.DebugPlot)
+    Feedback = local_open_debug_plot(Feedback, RTConfig);
+    return;
+end
+
+if strcmp(backend, Modes.FeedbackBackend.Psychtoolbox) || requiresPTBLive
     if ~hasPTB
         error(['Psychtoolbox Screen is required for live_fieldtrip local_circle feedback. ' ...
             'Disable RequirePsychtoolboxForLive only for mock/local debug_plot tests.']);
@@ -71,6 +84,14 @@ Feedback.Backend = '';
 Feedback.IsOpen = false;
 Feedback.UsesPsychtoolbox = false;
 Feedback.UsesDebugPlot = false;
+Feedback.UsesRealPsychtoolbox = false;
+Feedback.UsesHeadlessPsychtoolboxTest = false;
+Feedback.ScreenNumber = NaN;
+Feedback.AvailableScreens = [];
+Feedback.ScreenFcn = [];
+Feedback.TimeFcn = [];
+Feedback.FlipWhen = 0;
+Feedback.FlipAudit = struct([]);
 Feedback.WindowPtr = [];
 Feedback.WindowRect = [];
 Feedback.FigureHandle = [];
@@ -90,9 +111,10 @@ end
 
 function Feedback = local_open_debug_plot(Feedback, RTConfig)
 % Open a hidden MATLAB figure for local/mock display tests.
+Modes = nf_modes();
 circle = RTConfig.Feedback.Circle;
 maxRadius = circle.MaxRadiusPx;
-margin = 1.1 .* maxRadius;
+margin = circle.DebugAxesMarginScale .* maxRadius;
 
 visibleMode = 'off';
 if isfield(RTConfig, 'Analysis') && isfield(RTConfig.Analysis, 'DisplayMode') && ...
@@ -112,7 +134,7 @@ ylim(ax, [-margin margin]);
 axis(ax, 'off');
 hold(ax, 'on');
 
-Feedback.Backend = 'debug_plot';
+Feedback.Backend = Modes.FeedbackBackend.DebugPlot;
 Feedback.IsOpen = true;
 Feedback.UsesDebugPlot = true;
 Feedback.UsesPsychtoolbox = false;
@@ -123,27 +145,66 @@ end
 
 function Feedback = local_open_psychtoolbox(Feedback, RTConfig)
 % Open a minimal Psychtoolbox window for future live display checks.
+Modes = nf_modes();
 circle = RTConfig.Feedback.Circle;
 bg = local_rgb255(circle.BackgroundColor);
 windowPtr = [];
+screenFcn = local_screen_fcn(RTConfig);
+displayMode = local_get_nested_text(RTConfig, {'DevelopmentSession','DisplayMode'}, '');
+strictHeadless = nf_is_strict_step0_headless_contract(RTConfig);
+if strcmp(displayMode, Modes.DevelopmentDisplay.HeadlessPsychtoolboxTest) && ...
+        ~strictHeadless
+    error('Headless Psychtoolbox feedback requires the strict Step 0 test contract.');
+end
 try
-    screens = Screen('Screens');
-    screenNumber = max(screens);
-    [windowPtr, windowRect] = Screen('OpenWindow', screenNumber, bg);
+    screens = screenFcn('Screens');
+    configuredScreen = local_get_nested_numeric(RTConfig, ...
+        {'DevelopmentSession','Feedback','ScreenNumber'}, []);
+    if isempty(configuredScreen)
+        policy = local_get_nested_text(RTConfig, ...
+            {'DevelopmentSession','Feedback','ScreenSelectionPolicy'}, ...
+            Modes.ScreenSelection.HighestIndex);
+        if ~strcmp(policy, Modes.ScreenSelection.HighestIndex)
+            error('Unsupported Step 0 screen-selection policy: %s', policy);
+        end
+        screenNumber = max(screens);
+    else
+        screenNumber = configuredScreen;
+        if ~ismember(screenNumber, screens)
+            error('Configured Psychtoolbox screen is unavailable.');
+        end
+    end
+    windowRectConfig = local_get_nested_numeric(RTConfig, ...
+        {'DevelopmentSession','Feedback','WindowRect'}, []);
+    if isempty(windowRectConfig)
+        [windowPtr, windowRect] = screenFcn('OpenWindow', screenNumber, bg);
+    else
+        [windowPtr, windowRect] = screenFcn('OpenWindow', screenNumber, bg, windowRectConfig);
+    end
     centerPx = [(windowRect(1) + windowRect(3)) ./ 2, ...
         (windowRect(2) + windowRect(4)) ./ 2];
 
-    Feedback.Backend = 'psychtoolbox';
+    Feedback.Backend = Modes.FeedbackBackend.Psychtoolbox;
     Feedback.IsOpen = true;
     Feedback.UsesPsychtoolbox = true;
     Feedback.UsesDebugPlot = false;
+    Feedback.UsesRealPsychtoolbox = strcmp(displayMode, Modes.DevelopmentDisplay.RealPsychtoolbox);
+    Feedback.UsesHeadlessPsychtoolboxTest = strictHeadless;
+    Feedback.ScreenNumber = screenNumber;
+    Feedback.AvailableScreens = screens;
+    Feedback.ScreenFcn = screenFcn;
+    if strictHeadless
+        Feedback.TimeFcn = local_get_nested(RTConfig, ...
+            {'DevelopmentSession','TestHooks','TimeFcn'}, []);
+    end
+    Feedback.FlipWhen = RTConfig.DevelopmentSession.Feedback.FlipWhen;
     Feedback.WindowPtr = windowPtr;
     Feedback.WindowRect = windowRect;
     Feedback.CenterPx = centerPx;
 catch ME
     if ~isempty(windowPtr)
         try
-            Screen('Close', windowPtr);
+            screenFcn('Close', windowPtr);
         catch
         end
     end
@@ -151,9 +212,20 @@ catch ME
 end
 end
 
-function tf = local_has_psychtoolbox()
+function tf = local_has_psychtoolbox(RTConfig)
 % Detect the Screen function without opening a PTB window.
-tf = exist('Screen', 'file') ~= 0 || exist('Screen', 'builtin') ~= 0;
+tf = exist('Screen', 'file') ~= 0 || exist('Screen', 'builtin') ~= 0 || ...
+    nf_is_strict_step0_headless_contract(RTConfig);
+end
+
+function screenFcn = local_screen_fcn(RTConfig)
+% Resolve real Screen or the explicit headless command-compatible hook.
+if nf_is_strict_step0_headless_contract(RTConfig)
+    screenFcn = local_get_nested(RTConfig, ...
+        {'DevelopmentSession','TestHooks','ScreenFcn'}, []);
+else
+    screenFcn = @Screen;
+end
 end
 
 function value = local_get_nested_text(S, path, defaultValue)
@@ -188,8 +260,29 @@ elseif isnumeric(current) && isscalar(current) && isfinite(current)
 end
 end
 
+function value = local_get_nested_numeric(S, path, defaultValue)
+% Read nested numeric content with a fallback.
+value = local_get_nested(S, path, defaultValue);
+if ~isnumeric(value)
+    value = defaultValue;
+end
+end
+
+function value = local_get_nested(S, path, defaultValue)
+% Read nested content with a fallback.
+value = defaultValue;
+current = S;
+for iPath = 1:numel(path)
+    if ~isstruct(current) || ~isfield(current, path{iPath})
+        return;
+    end
+    current = current.(path{iPath});
+end
+value = current;
+end
+
 function color = local_rgb01(colorIn)
-% Convert RGB triplets to MATLAB figure color units.
+% Convert 255-based RGB triplets to MATLAB's unit color scale.
 color = double(colorIn(:)');
 if any(color > 1)
     color = color ./ 255;
@@ -198,7 +291,7 @@ color = min(max(color, 0), 1);
 end
 
 function color = local_rgb255(colorIn)
-% Convert RGB triplets to PTB color units.
+% Convert unit RGB triplets to Psychtoolbox's 255-based color units.
 color = double(colorIn(:)');
 if all(color <= 1)
     color = color .* 255;

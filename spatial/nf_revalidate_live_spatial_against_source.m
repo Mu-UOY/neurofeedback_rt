@@ -52,19 +52,35 @@ else
     Spatial.InputChannelNames = channelNames;
 end
 
-%% ===== CHECK HASH AND CORRECTION STATE =====
-% Header hash and comparable correction fields prevent silent reuse drift.
-sourceHash = local_text_field(Source, 'HeaderHash', '');
-if isfield(Spatial, 'LiveHeaderHash') && ~isempty(Spatial.LiveHeaderHash) && ...
-        ~isempty(sourceHash) && ~strcmp(char(Spatial.LiveHeaderHash), sourceHash)
-    error('Spatial LiveHeaderHash mismatch against current live header.');
-elseif ~isfield(Spatial, 'LiveHeaderHash') || isempty(Spatial.LiveHeaderHash)
-    Spatial.LiveHeaderHash = sourceHash;
+%% ===== CHECK FINGERPRINT AND CORRECTION STATE =====
+% Structural header fingerprint excludes volatile NSamples and endpoints.
+sourceFingerprint = local_source_fingerprint(Source);
+spatialFingerprint = local_spatial_fingerprint(Spatial);
+if local_is_legacy_nsamples_hash(spatialFingerprint)
+    error(['Spatial metadata uses legacy NSamples-based LiveHeaderHash. ', ...
+        'Regenerate matrix metadata with LiveHeaderFingerprint structural identity.']);
+end
+if ~isempty(spatialFingerprint) && ~isempty(sourceFingerprint) && ...
+        ~strcmp(spatialFingerprint, sourceFingerprint)
+    error('Spatial LiveHeaderFingerprint mismatch against current live header.');
+elseif isempty(spatialFingerprint)
+    spatialFingerprint = sourceFingerprint;
+end
+Spatial.LiveHeaderFingerprint = spatialFingerprint;
+Spatial.LiveHeaderHash = spatialFingerprint;
+if isfield(Source, 'HeaderFingerprintVersion')
+    Spatial.LiveHeaderFingerprintVersion = Source.HeaderFingerprintVersion;
+elseif ~isfield(Spatial, 'LiveHeaderFingerprintVersion')
+    Spatial.LiveHeaderFingerprintVersion = NaN;
 end
 
 sourceCorrection = local_field(Source, 'CorrectionState', struct());
+if isfield(Spatial, 'IsTechnicalFallback') && isequal(Spatial.IsTechnicalFallback, false)
+    local_require_real_spatial_metadata(Spatial, sourceCorrection);
+end
 if isfield(Spatial, 'CorrectionState') && isstruct(Spatial.CorrectionState) && ...
-        ~isempty(fieldnames(Spatial.CorrectionState)) && isstruct(sourceCorrection)
+        ~isempty(fieldnames(Spatial.CorrectionState)) && isstruct(sourceCorrection) && ...
+        ~isempty(fieldnames(sourceCorrection))
     local_check_correction_state(Spatial.CorrectionState, sourceCorrection);
 elseif ~isfield(Spatial, 'CorrectionState') || ~isstruct(Spatial.CorrectionState)
     Spatial.CorrectionState = sourceCorrection;
@@ -82,6 +98,34 @@ end
 
 Spatial.ValidatedAgainstLiveHeader = true;
 
+end
+
+function local_require_real_spatial_metadata(Spatial, sourceCorrection)
+% Precomputed/real spatial matrices must fail closed when metadata is absent.
+if ~isfield(Spatial, 'IsIPS') || ~isequal(Spatial.IsIPS, true)
+    error('Real/precomputed live spatial matrix must explicitly set IsIPS=true.');
+end
+if ~isfield(Spatial, 'InputChannelNames') || isempty(Spatial.InputChannelNames)
+    error('Real/precomputed live spatial matrix is missing InputChannelNames metadata.');
+end
+if ~isfield(Spatial, 'CorrectionState') || ~isstruct(Spatial.CorrectionState) || ...
+        isempty(fieldnames(Spatial.CorrectionState))
+    error('Real/precomputed live spatial matrix is missing CorrectionState metadata.');
+end
+if ~isstruct(sourceCorrection) || isempty(fieldnames(sourceCorrection))
+    error('Live source is missing CorrectionState metadata for real/precomputed spatial validation.');
+end
+requiredFields = {'AppliedChannelGains','AppliedMegRefCorrection', ...
+    'RemovedBlockMean','AppliedProjector','RequiresMarcConfirmation','MarcConfirmed'};
+for iField = 1:numel(requiredFields)
+    fieldName = requiredFields{iField};
+    if ~isfield(Spatial.CorrectionState, fieldName)
+        error('Spatial CorrectionState missing required field %s.', fieldName);
+    end
+    if ~isfield(sourceCorrection, fieldName)
+        error('Source CorrectionState missing required field %s.', fieldName);
+    end
+end
 end
 
 function local_check_correction_state(spatialState, sourceState)
@@ -161,6 +205,28 @@ if isstruct(S) && isfield(S, fieldName) && ~isempty(S.(fieldName)) && ...
         (ischar(S.(fieldName)) || isstring(S.(fieldName)))
     value = char(S.(fieldName));
 end
+end
+
+function value = local_source_fingerprint(Source)
+% Prefer canonical structural fingerprint, falling back to legacy alias.
+value = local_text_field(Source, 'HeaderFingerprint', '');
+if isempty(value)
+    value = local_text_field(Source, 'HeaderHash', '');
+end
+end
+
+function value = local_spatial_fingerprint(Spatial)
+% Prefer canonical structural fingerprint, falling back to legacy alias.
+value = local_text_field(Spatial, 'LiveHeaderFingerprint', '');
+if isempty(value)
+    value = local_text_field(Spatial, 'LiveHeaderHash', '');
+end
+end
+
+function tf = local_is_legacy_nsamples_hash(value)
+% Detect old volatile header hashes containing NSamples.
+value = char(value);
+tf = startsWith(value, 'fs_') && contains(value, '_nch_') && contains(value, '_ns_');
 end
 
 function value = local_numeric_field(S, fieldName, defaultValue)

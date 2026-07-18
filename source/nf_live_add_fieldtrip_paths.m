@@ -17,15 +17,23 @@ PathInfo.AddedPaths = {};
 PathInfo.UsedTestHook = false;
 PathInfo.BufferShadowingDetected = false;
 PathInfo.BufferLooksLikeMatlabToolbox = false;
+PathInfo.FieldTripRoot = '';
+PathInfo.FieldTripVersion = '';
+PathInfo.FtRealtimeFileProxyExists = false;
+PathInfo.FtRealtimeFileProxyPath = '';
+PathInfo.StreamRole = 'unknown';
 PathInfo.Messages = {};
 
 FT = RTConfig.Source.FieldTrip;
+PathInfo.FieldTripRoot = FT.FieldTripRoot;
+PathInfo.StreamRole = local_field(FT, 'StreamRole', 'unknown');
 
 %% ===== TEST HOOK SHORT-CIRCUIT =====
 % Hardware-free tests do not require a real buffer.m on the MATLAB path.
 if isfield(FT, 'TestBufferFcn') && ~isempty(FT.TestBufferFcn)
     PathInfo.Status = 'PASS';
     PathInfo.UsedTestHook = true;
+    PathInfo = local_attach_fieldtrip_capabilities(PathInfo);
     PathInfo.Messages{end+1} = 'Using RTConfig.Source.FieldTrip.TestBufferFcn; real buffer.m not required.';
     return;
 end
@@ -96,6 +104,30 @@ if ~ShadowInfo.Pass
     error('Invalid FieldTrip buffer.m selection: %s', strjoin(ShadowInfo.Messages, ' '));
 end
 
+PathInfo = local_attach_fieldtrip_capabilities(PathInfo);
 PathInfo.Status = 'PASS';
 
+end
+
+function PathInfo = local_attach_fieldtrip_capabilities(PathInfo)
+% Record optional FieldTrip capabilities without making them consumer gates.
+proxyPath = which('ft_realtime_fileproxy');
+PathInfo.FtRealtimeFileProxyExists = ~isempty(proxyPath);
+PathInfo.FtRealtimeFileProxyPath = proxyPath;
+try
+    if exist('ft_version', 'file') ~= 0 || exist('ft_version', 'builtin') ~= 0
+        PathInfo.FieldTripVersion = strtrim(evalc('ft_version'));
+    end
+catch ME
+    PathInfo.Messages{end+1} = sprintf('ft_version unavailable: %s', ME.message);
+end
+end
+
+function value = local_field(S, fieldName, defaultValue)
+% Read optional field.
+if isstruct(S) && isfield(S, fieldName)
+    value = S.(fieldName);
+else
+    value = defaultValue;
+end
 end
