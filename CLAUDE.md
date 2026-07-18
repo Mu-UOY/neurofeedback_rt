@@ -85,4 +85,7 @@ Full file-by-file classification, split targets, sequencing, and model routing:
 - `docs/HISTORY.md` — scientific origin, Benjamin's prototype, what was inherited vs rebuilt.
 - `docs/MEG_TOOLS_REFERENCE.md` — Brainstorm, FieldTrip, McGill CTF MEG unit.
 - `docs/FIELDTRIP_ENDPOINTS.md` — sim and live source endpoints.
+- `docs/Next plan 3.0.txt` — Step 3D live self-test plan (current branch `feature/step3d-live-feedback-self-test`).
+- `docs/Neurofeedback_Frozen_Full_FieldTrip_Simulation_Plan_v1.0.txt` — full FieldTrip simulation plan; currently implementing its Step 0.
+- `docs/cleanup_prompts/` — paste-ready prompts for coding agents, one per cleanup step.
 - `CLEANUP_MANIFEST.md` — keep / archive / split spec.

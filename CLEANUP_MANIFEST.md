@@ -14,6 +14,30 @@ coding agents shrinks ~35% **without losing any function on the path to the goal
 The partition line is the one that also serves eventual Brainstorm open-source packaging:
 **shippable core** (survives, gets published) vs **development apparatus** (archived, never ships).
 
+## Plan context & TIMING CORRECTION (read before archiving)
+
+Two active plans govern the code (both in `docs/`):
+
+- **`Next plan 3.0` — Step 3D live self-test** (`nf_run_live_self_test`). This is the **current branch**
+  `feature/step3d-live-feedback-self-test`. Uncommitted WIP on the tree is largely this work.
+- **`Neurofeedback_Frozen … v1.0` — full FieldTrip simulation plan.** You are mid-implementing its
+  **Step 0: early full-chain orchestration skeleton**, whose stated deliverable is *"an always-running
+  full-chain development harness available before the scientific matrix is complete."*
+
+**Correction to this manifest:** the Step 0 harness is **active current-milestone work, NOT legacy to
+archive.** These files are therefore **KEEP-ACTIVE (archive later, only after Frozen Step 5 builds the
+real matrix and supersedes the skeleton):**
+`main/nf_run_development_full_chain.m`, `main/nf_run_development_transition.m`,
+`main/nf_development_timeline_init.m`, `main/nf_development_timeline_append.m`,
+`main/nf_development_maybe_inject_failure.m`, `main/nf_validate_development_feedback_audit.m`,
+and **all `step0_*` tests** (keep as-is for now — the earlier "archive 10 / rewrite 8" split is
+deferred until the harness is retired).
+
+**What is still safe to archive now** is only the genuinely-finished *blind-phase* apparatus: the
+`validation/` filter-comparison + artificial-simulation suite (the FFT-vs-IIR/SOS decision, now made),
+the `marc_validation` reporting, synthetic-theta datasets, and the `brainstorm_intro` / `iir_sos_check`
+validation runners. Those predate both current plans and their job is done.
+
 ## Ground truth measured from the repo
 
 - 345 `.m` files. Non-test/non-output code: **23,386 lines**. Tests: **210 files / 10,710 lines**.
@@ -85,14 +109,13 @@ Selected files from mixed folders — KEEP:
 `nf_plot_synthetic_input_report`, `nf_plot_trial_report`, `nf_plot_validation_report`,
 `nf_synthetic_block_info_to_table`, `nf_validation_to_table`.
 
-**`main/` — archive 7 dev harnesses:** `nf_run_validation`, `nf_run_marc_validation_bundle`,
-`nf_run_brainstorm_iir_sos_check`, `nf_run_brainstorm_intro_validation`,
-`nf_run_development_full_chain`, `nf_development_maybe_inject_failure`,
-`nf_validate_development_feedback_audit`.
-> **Correction (verified against repo):** `nf_development_timeline_init.m` and
-> `nf_development_timeline_append.m` are **KEEP-CORE**, not archive — they are called by the
-> production `nf_run_live_resting.m` and `nf_run_live_trial.m`, so they sit on the live path.
-> (Rename to drop the "development" prefix later if desired, but do not archive.)
+**`main/` — archive ONLY 4 finished blind-phase runners:** `nf_run_validation`,
+`nf_run_marc_validation_bundle`, `nf_run_brainstorm_iir_sos_check`, `nf_run_brainstorm_intro_validation`.
+> **Do NOT archive** `nf_run_development_full_chain`, `nf_run_development_transition`,
+> `nf_development_timeline_init/append`, `nf_development_maybe_inject_failure`,
+> `nf_validate_development_feedback_audit` — these are the active Frozen **Step 0** harness
+> (see Plan context above). `timeline_init/append` are additionally on the live path
+> (`nf_run_live_resting/trial`). Archive this cluster only after Frozen Step 5.
 > Note: `nf_run_development_full_chain` is the Step 0 end-to-end sim driver. If you still use it to
 > exercise resting→transition→trial in simulation, **demote** it into `dev-archive/` but keep it
 > runnable rather than deleting — revisit once the `ft_realtime_fileproxy` sim milestone has its own clean driver.
@@ -140,7 +163,14 @@ Approx. archived code: ~9,000–9,500 lines of non-test `.m`, plus their tests (
   `marc_*`, `validation_report`, `offline_reference`, `development_*` (except see step0 split below).
 - After moving, **`tests/run_all_tests.m` must stay green** on the KEEP set. That green run is the definition of "cleanup done."
 
-### Precise `step0_*` test split (all 23 audited by what they actually assert)
+### `step0_*` tests — DEFERRED (keep all for now)
+
+> **Superseded by the Plan-context correction above.** The `step0_*` tests exercise the active
+> Frozen **Step 0** harness, so **keep all 23 as-is** for now. The keep/rewrite/archive split below is
+> retained only as the plan for **after** Frozen Step 5 retires the skeleton — do not execute it during
+> the current cleanup.
+
+### Precise `step0_*` test split (all 23 audited — DEFERRED, execute only after Frozen Step 5)
 
 **KEEP as-is (5)** — drive KEEP-CORE units directly, no dependency on the archived full-chain driver:
 

@@ -1,0 +1,3264 @@
+NEUROFEEDBACK_RT
+FROZEN FULL PRODUCTION-EQUIVALENT FIELDTRIP SIMULATION PLAN
+PLAN VERSION 1.0
+FROM THE CURRENT PROGRAM STATE TO THE FULL RECORDED-CTF REPLAY ENDPOINT
+
+======================================================================
+0. DOCUMENT PURPOSE
+======================================================================
+
+This document defines the complete implementation path from the current state of
+the neurofeedback_rt program to the next project endpoint:
+
+A full production-equivalent FieldTrip simulation using recorded CTF/MEG data,
+with the same downstream neurofeedback program that will later be used in the
+live MEG room.
+
+This document incorporates the current codebase state, all previously identified
+missing work, and the final review refinements concerning representative early
+loads, enforceable threshold locking, independently verified canonical hashing,
+worst-case resting-extension capacity, calibrated producer-liveness thresholds,
+explicit EOF classification, producer-termination semantics, robustness-test
+status labeling, and reset recovery. It intentionally separates:
+
+- early orchestration and performance-risk reduction;
+- human scientific preparation and sign-off;
+- matrix construction and scientific validation;
+- complete-chain offline/streaming validation;
+- producer lifecycle and continuous-stream handling;
+- Psychtoolbox validation;
+- strict final acceptance.
+
+The plan ends when the complete recorded-CTF FieldTrip replay passes the strict
+production-equivalence acceptance gate. It does not include the later live-room
+session itself.
+
+Plan control
+------------
+
+Plan.Version = '1.0'
+Plan.Status = 'frozen'
+Plan.FrozenAt = '<set when committed>'
+Plan.Owner = '<set in repository>'
+Plan.ChangelogPath = '<repository path to plan changelog>'
+
+After implementation begins, changes to this specification must occur through an
+explicit new plan version and changelog entry. Implementation discoveries may
+produce scoped amendments, but they must not silently weaken the acceptance gate
+or mutate locked thresholds during a run.
+
+
+======================================================================
+1. FINAL GOAL
+======================================================================
+
+The final simulation data path is:
+
+Recorded CTF/MEG dataset
+-> ft_realtime_fileproxy
+-> local FieldTrip buffer
+-> the same live_fieldtrip reader intended for the MEG room
+-> live header, sampling-rate, channel, and stream-state validation
+-> the real precomputed full CombinedMatrix
+-> IPS source signals with validated artifact suppression
+-> residual-artifact detection and invalid-window rejection
+-> stateful causal theta-band filtering
+-> sliding-window theta-power estimation
+-> resting baseline collection and quality validation
+-> manual transition with continuous producer and explicit backlog discard
+-> fresh trial processing state
+-> trial z-scoring, clipping, and smoothing
+-> real Psychtoolbox feedback
+-> logging, stopping, validation, final reporting, and cleanup
+
+The eventual live path is:
+
+MEG acquisition room
+-> ctf2t
+-> FieldTrip buffer
+-> the same downstream program used by the simulation
+
+Everything after the FieldTrip buffer must be shared between simulation and live
+operation.
+
+Moving from the successful simulation to the MEG room should require only:
+
+- source configuration changes;
+- FieldTrip host and port changes;
+- room-specific metadata;
+- session-specific header/channel expectations;
+- a session-compatible CombinedMatrix;
+- Psychtoolbox display configuration;
+- trigger/communication configuration when enabled.
+
+No runtime or processing function may contain hidden machine-specific paths,
+ports, channel lists, matrix paths, screen numbers, correction settings, or
+room-specific assumptions.
+
+
+======================================================================
+2. CURRENT STATE OF THE PROGRAM
+======================================================================
+
+The program already implements most downstream components:
+
+- live_fieldtrip source initialization and chunk reading;
+- FieldTrip header reading and normalization;
+- sampling-rate validation;
+- channel-name/order and duplicate-label validation;
+- timeout, continuity, reset, and sample-index handling;
+- local ft_realtime_fileproxy configuration and launcher scaffolding;
+- the combined_matrix runtime contract;
+- precomputed matrix loading and source/header revalidation;
+- explicitly labeled technical fallback matrices;
+- spatial application before temporal filtering;
+- stateful IIR/SOS filtering across chunks;
+- circular buffering and gap detection;
+- sliding-window theta-power calculation;
+- resting baseline accumulation;
+- baseline outlier rejection, finalization, quality checking, saving, and loading;
+- trial z-scoring, clipping, and smoothing;
+- feedback mapping;
+- Psychtoolbox circle-feedback support;
+- incremental logging and final log saving;
+- manual, success-based, and long hard-failsafe stopping;
+- normal and error cleanup;
+- separate live resting and live trial runners;
+- dry-run, smoke-test, self-test, and fake-buffer test infrastructure.
+
+The architecture should remain intact. The remaining work is primarily:
+
+1. prove what ft_realtime_fileproxy actually places in the buffer;
+2. freeze the final matrix input/correction boundary;
+3. produce a human-approved Brainstorm scientific package;
+4. build and validate the real full IPS CombinedMatrix;
+5. bind matrix identity to the entire session and baseline;
+6. make residual-artifact handling operational;
+7. build a complete causal offline reference;
+8. formalize producer lifecycle and continuous liveness;
+9. connect all existing phases into one continuous replay;
+10. validate real Psychtoolbox behavior;
+11. enforce a strict no-fallback/no-SKIP final gate.
+
+
+======================================================================
+3. FINAL PROCESSING CONTRACT
+======================================================================
+
+The final fixed spatial chain is:
+
+CombinedMatrix
+    = S_IPS
+    * K_inverse
+    * E_good
+    * P_artifact
+    * R_CTF
+    * D_gain
+    * C_channels
+
+where:
+
+C_channels
+    maps the actual FieldTrip buffer channel order into the Brainstorm model
+    order;
+
+D_gain
+    converts raw CTF counts into calibrated values only when the buffer has not
+    already applied gains;
+
+R_CTF
+    converts the incoming compensation/reference state into the state expected
+    by the Brainstorm inverse model only when this conversion has not already
+    occurred;
+
+P_artifact
+    is the validated Brainstorm artifact-rejection projector;
+
+E_good
+    selects the exact ResultsMat.GoodChannel set;
+
+K_inverse
+    is the approved Brainstorm inverse imaging kernel;
+
+S_IPS
+    selects all source rows belonging to the approved IPS scout.
+
+The online matrix contract is:
+
+X_buffer:
+    characterized FieldTrip sensor data
+    [nInputChannels x nSamples]
+
+Y_IPS:
+    IPS source-row signals
+    [nIPSSourceRows x nSamples]
+
+Y_IPS = CombinedMatrix * X_buffer
+
+All IPS rows remain separate through spatial projection and temporal filtering.
+The power estimator then computes power per IPS row and averages row powers.
+
+The project must not collapse all IPS source rows into one mean time series
+before power unless that alternative measure is separately justified and
+scientifically validated.
+
+Fixed channel-space operations included in CombinedMatrix must not also be
+applied in the source adapter.
+
+Block-mean removal may remain a separately declared temporal preprocessing step
+because it acts across samples rather than only across channel rows.
+
+
+======================================================================
+4. NON-NEGOTIABLE INVARIANTS
+======================================================================
+
+1. The final replay uses:
+   Spatial.Mode = combined_matrix
+
+2. The final replay requires:
+   Spatial.IsIPS = true
+   Spatial.IsTechnicalFallback = false
+
+3. TechnicalFallback and TechnicalPlaceholder remain development tools only.
+
+4. MatrixSource = compute_live does not need to be implemented for this
+   milestone. The real matrix is prepared before resting and trial.
+
+5. Resting and trial use the same matrix artifact and exact matrix hash.
+
+6. The matrix is applied exactly once per accepted chunk.
+
+7. Gains, CTF compensation, and artifact projector operations cannot be applied
+   both outside and inside the matrix.
+
+8. The source adapter cannot silently reinterpret the matrix input contract.
+
+9. Resting and trial use the same live_fieldtrip source dispatcher and the same
+   real-time core.
+
+10. The final replay uses one continuous fileproxy producer across resting,
+    transition, and trial.
+
+11. The transition does not restart fileproxy in the final acceptance run.
+
+12. During transition:
+    - fileproxy continues advancing;
+    - accumulated samples are discarded;
+    - the skipped sample range is logged;
+    - the source cursor jumps to the current live edge;
+    - filter, circular-buffer, power-window, and z-smoothing state are reset.
+
+13. Resting and trial begin with fresh temporal processing state.
+
+14. Trial feedback remains suppressed until a complete fresh trial power window
+    produces a valid measure.
+
+15. All machine-specific and room-specific values are configuration-driven.
+
+16. Required final validation sections cannot be SKIPPED.
+
+17. The final Psychtoolbox run uses the real Psychtoolbox backend.
+
+18. A development Psychtoolbox window may be used earlier, but it is explicitly
+    labeled and rejected by the final acceptance gate.
+
+19. The final replay runs at real-time speed and does not develop unbounded
+    backlog.
+
+20. Any unexpected buffer reset during the final acceptance run causes FAIL.
+
+21. Producer readiness and continuous producer liveness are both monitored.
+
+22. Exact artifact identity is verified through hashing; numerical equivalence
+    is verified through tolerance-based comparison. These are separate concepts.
+
+23. The offline equivalence reference uses the same causal one-directional
+    filter behavior as the streaming path.
+
+24. Scientific projector/scout approval is a human-reviewed gated milestone.
+
+25. Thresholds are calibrated before the final run, locked, versioned, and
+    hashed.
+
+26. The final run must produce complete logs, provenance, cleanup evidence, and a
+    plain-language event timeline.
+
+27. At least one canonical hash golden vector is independently reproduced by a
+    second implementation rather than generated only by the MATLAB serializer
+    under test.
+
+28. Canonical serializer edge-case tests run on the actual final stimulus
+    computer.
+
+29. Total dataset length is extracted from authoritative metadata, verified, and
+    stored during stream characterization.
+
+30. Producer-liveness thresholds are empirically calibrated, locked, and loaded
+    from the threshold artifact.
+
+31. EOF, healthy pacing jitter, producer stall, and producer process failure are
+    distinct states with distinct stop reasons.
+
+32. A robustness-test PASS means that expected failure detection and recovery
+    behaved correctly. It can never be interpreted as a production-equivalent
+    session PASS.
+
+33. Artifact-detector uncertainty is itself pass/fail gated; an apparently good
+    point estimate with inadequate evidence cannot pass.
+
+34. Transition-capacity preflight uses the maximum possible configured resting
+    endpoint, including the full allowed extension.
+
+
+======================================================================
+5. UPDATED IMPLEMENTATION ORDER
+======================================================================
+
+The new order is:
+
+0. Early full-chain orchestration skeleton
+1. Matrix input-boundary and correction contract
+2. Early representative real-time performance smoke test
+3. Real fileproxy stream characterization
+4. Human-reviewed Brainstorm scientific package and sign-off
+5. Initial real matrix construction
+6. Threshold calibration and locking
+7. Final matrix validation and versioned artifact
+8. Exactly-once runtime integration
+9. Complete causal offline reference
+10. Production replay configuration
+11. Managed producer lifecycle and continuous liveness
+12. Full continuous resting-to-trial orchestrator
+13. Development Psychtoolbox integration
+14. Final Psychtoolbox display validation
+15. Full-loop performance, backlog, and resilience validation
+16. Strict final production-equivalent FieldTrip replay
+
+
+======================================================================
+STEP 0 — EARLY FULL-CHAIN ORCHESTRATION SKELETON
+======================================================================
+
+Purpose
+-------
+
+Validate the entire session lifecycle before the real scientific matrix is
+ready.
+
+This is not a scientific validation and cannot satisfy the final milestone.
+
+Test chain
+----------
+
+Synthetic or recorded development data
+-> mock buffer or local FieldTrip buffer
+-> technical test matrix
+-> stateful filter
+-> power
+-> short resting phase
+-> baseline finalization
+-> manual transition
+-> backlog handling
+-> fresh trial state
+-> short trial
+-> explicit development Psychtoolbox window
+-> stopping
+-> logging
+-> cleanup
+-> session report
+
+Production-representative workload
+----------------------------------
+
+The technical development matrix must have the same intended:
+
+- input-channel count;
+- output IPS-row count;
+- numerical class;
+- approximate density;
+- multiplication orientation;
+- chunk dimensions;
+
+as the expected production CombinedMatrix.
+
+The coefficients may be synthetic, but the computational shape must be
+production-representative.
+
+Before the actual IPS row count is known, use a documented conservative
+upper-bound output-row count. After Step 5 builds the first real matrix, repeat
+the skeleton with the actual matrix dimensions before proceeding to the full
+orchestrator.
+
+The skeleton must also use:
+
+- Fs = 2400 Hz;
+- ChunkSamples = 480;
+- PowerWindowSamples = 4800;
+- the real IIR/SOS filter structure;
+- representative logging volume;
+- the configured feedback-update cadence;
+- development Psychtoolbox flip logging.
+
+This ensures that Step 0 validates session logic under a representative load
+rather than only under a convenient toy workload.
+
+Required behavior
+-----------------
+
+The skeleton run must prove:
+
+- the top-level runner can coordinate all phases;
+- producer readiness is handled;
+- resting and trial execute in sequence;
+- baseline save/load works inside one session;
+- manual transition works;
+- accumulated transition data are not treated as trial data;
+- trial temporal state is fresh;
+- participant feedback waits for fresh warm-up;
+- stop rules work;
+- an injected processing error triggers cleanup;
+- an injected feedback error triggers cleanup;
+- a partial session report is saved after failure;
+- a final session summary is generated;
+- the development timeline is generated;
+- screen number, window rectangle, requested flip times, completed flip times,
+  missed flips, and measure timestamps are logged;
+- the maximum permitted manual transition pause completes correctly;
+- a pause beyond the configured maximum aborts with transition_timeout before
+  trial feedback begins.
+
+Development labeling
+--------------------
+
+The run must record:
+
+Session.DevelopmentOnly = true
+Spatial.IsTechnicalFallback = true
+Feedback.Psychtoolbox.DevelopmentDisplay = true
+ProductionEquivalent = false
+
+Required tests
+--------------
+
+- skeleton success path;
+- resting error cleanup;
+- transition error cleanup;
+- trial processing error cleanup;
+- Psychtoolbox error cleanup;
+- logger error cleanup;
+- partial report creation;
+- production-representative technical-matrix dimensions;
+- maximum permitted transition pause;
+- excessive transition pause produces transition_timeout;
+- early session_timeline.html generation;
+- development Psychtoolbox flip-audit fields;
+- technical fallback cannot satisfy the final gate.
+
+Deliverable
+-----------
+
+An always-running full-chain development harness available before the scientific
+matrix is complete.
+
+
+======================================================================
+STEP 1 — FREEZE THE MATRIX INPUT BOUNDARY AND CORRECTION CONTRACT
+======================================================================
+
+Purpose
+-------
+
+Define exactly what enters CombinedMatrix and prevent double correction.
+
+Runtime boundary
+----------------
+
+FieldTrip buffer sensor block
+-> optional configured block-mean removal
+-> CombinedMatrix
+-> causal theta filter
+-> circular buffer
+-> power
+
+Required matrix metadata
+------------------------
+
+Spatial.InputRepresentation
+Spatial.InputUnits
+Spatial.InputChannelNames
+Spatial.OutputSignalNames
+Spatial.InputCompensationGrade
+Spatial.TargetCompensationGrade
+
+Spatial.CorrectionState.InputAlreadyCalibrated
+Spatial.CorrectionState.InputAlreadyCompensated
+Spatial.CorrectionState.GainsIncludedInMatrix
+Spatial.CorrectionState.MegRefIncludedInMatrix
+Spatial.CorrectionState.ProjectorIncludedInMatrix
+Spatial.CorrectionState.BlockMeanRemovedSeparately
+
+Required source metadata
+------------------------
+
+RTConfig.Source.CTF.InputRepresentation
+RTConfig.Source.CTF.ExpectedCompensationGrade
+RTConfig.Source.CTF.ApplyBlockMeanOutsideMatrix
+RTConfig.Source.CTF.Res4Source
+RTConfig.Source.CTF.ExternalRes4Path
+RTConfig.Source.CTF.ExternalRes4Hash
+
+Required rules
+--------------
+
+- every correction flag identifies where correction occurs;
+- source and matrix states must match exactly;
+- duplicate gain application fails;
+- duplicate compensation application fails;
+- duplicate projector application fails;
+- missing required corrections fail;
+- unsupported compensation transitions fail;
+- block-mean removal remains explicit and separately logged;
+- correction identity becomes part of the processing identity.
+
+Likely files
+------------
+
+config/nf_default_config.m
+config/nf_live_config.m
+config/nf_local_fieldtrip_replay_config.m
+config/nf_check_config.m
+config/nf_finalize_config.m
+config/nf_modes.m
+
+source/nf_live_apply_ben_ctf_corrections.m
+source/nf_source_init_live_fieldtrip_ben.m
+source/nf_live_read_header_fieldtrip.m
+
+spatial/nf_prepare_live_combined_matrix.m
+spatial/nf_revalidate_live_spatial_against_source.m
+
+rt/nf_rt_update_config_hash.m
+baseline/nf_baseline_init.m
+baseline/nf_baseline_finalize.m
+
+Required tests
+--------------
+
+- reject duplicate gains;
+- reject duplicate CTF compensation;
+- reject duplicate projector;
+- reject calibrated/raw mismatch;
+- reject compensation-grade mismatch;
+- reject missing external res4 when configured;
+- reject disagreement between header res4 and external res4;
+- block-mean removal is separately declared;
+- correction changes alter processing hash;
+- baseline carries correction identity.
+
+Deliverable
+-----------
+
+A stable raw-buffer-to-IPS processing contract.
+
+
+======================================================================
+STEP 2 — EARLY REPRESENTATIVE REAL-TIME PERFORMANCE SMOKE TEST
+======================================================================
+
+Purpose
+-------
+
+Detect performance problems before investing heavily in scientific preparation.
+
+Test design
+-----------
+
+Use representative worst-case dimensions for:
+
+- input sensor channels;
+- IPS output rows;
+- 480-sample chunks;
+- 2400-Hz sampling;
+- 0.2-second chunk period;
+- 2-second power window.
+
+Use:
+
+- a representative dense matrix;
+- the real IIR/SOS filter;
+- circular buffer;
+- power calculation;
+- representative logging overhead.
+
+Measure
+-------
+
+EarlyPerformance.MatrixMultiplySeconds
+EarlyPerformance.FilterSeconds
+EarlyPerformance.BufferSeconds
+EarlyPerformance.PowerSeconds
+EarlyPerformance.LoggingSeconds
+EarlyPerformance.TotalCoreSeconds
+EarlyPerformance.ChunkBudgetSeconds
+EarlyPerformance.Pass
+
+Rules
+-----
+
+- do not change chunk size merely because performance is unknown;
+- first profile the existing contract;
+- MATLAB dense multiplication should use optimized BLAS;
+- do not assume sparse is faster;
+- compare dense and sparse only if sparsity is genuine;
+- MEX/GPU/parallel redesign is considered only if measured timing requires it.
+
+Early gate
+----------
+
+EarlyPerformance.Status must be PASS before later full integration proceeds.
+
+Repeat gate after real matrix construction
+------------------------------------------
+
+After Step 5 determines the actual CombinedMatrix dimensions and density:
+
+1. rerun the performance smoke test using the real matrix;
+2. rerun the Step 0 skeleton using the actual matrix dimensions;
+3. measure the representative orchestration and RT-core load together;
+4. require both repeated tests to pass before Step 12.
+
+This prevents the early orchestration skeleton and the matrix timing test from
+validating disconnected workloads.
+
+This is not the final timing validation because it excludes:
+
+- FieldTrip read latency;
+- producer behavior;
+- full logging;
+- Psychtoolbox flips;
+- end-to-end consumer lag.
+
+Deliverable
+-----------
+
+A cheap early confirmation that the core processing budget is feasible.
+
+
+======================================================================
+STEP 3 — CHARACTERIZE THE REAL FILEPROXY STREAM
+======================================================================
+
+Purpose
+-------
+
+Determine what ft_realtime_fileproxy actually writes into the FieldTrip buffer.
+
+Required work
+-------------
+
+1. Use the actual CTF dataset intended for final simulation.
+
+2. Start fileproxy at real-time speed.
+
+3. Save:
+   - FieldTrip header;
+   - normalized labels;
+   - first controlled data blocks;
+   - sample indices;
+   - data class;
+   - available ctf_res4 metadata.
+
+4. Parse the real ctf_res4 representation robustly.
+
+5. Support:
+
+RTConfig.Source.CTF.Res4Source =
+    'fieldtrip_header'
+or
+    'external_file'
+
+6. When using external_file:
+   - use only the explicitly configured path;
+   - hash the file;
+   - verify dataset identity;
+   - reject disagreement with header metadata;
+   - never search nearby directories heuristically.
+
+7. Determine experimentally whether the buffer contains:
+   - raw CTF counts;
+   - calibrated values;
+   - already compensated MEG data;
+   - reference channels;
+   - another representation.
+
+8. Compare identical sample ranges obtained through:
+   - fileproxy/FieldTrip buffer;
+   - Brainstorm offline reading;
+   - direct FieldTrip offline reading where helpful.
+
+9. Determine:
+   - channel mapping;
+   - gain needs;
+   - compensation needs;
+   - reference-channel presence;
+   - block size;
+   - replay pacing behavior;
+   - total dataset sample count;
+   - EOF behavior;
+   - producer status at EOF;
+   - buffer-end behavior after EOF.
+
+Stream characterization artifact
+--------------------------------
+
+StreamCharacterization.DatasetPath
+StreamCharacterization.DatasetHash
+StreamCharacterization.HeaderSnapshot
+StreamCharacterization.HeaderFingerprint
+StreamCharacterization.ChannelNames
+StreamCharacterization.Fs
+StreamCharacterization.NChannels
+StreamCharacterization.DataClass
+StreamCharacterization.InputRepresentation
+StreamCharacterization.InputUnits
+StreamCharacterization.CompensationGrade
+StreamCharacterization.ReferenceChannelsPresent
+StreamCharacterization.CTFRes4Source
+StreamCharacterization.CTFRes4Hash
+StreamCharacterization.FirstComparedSample
+StreamCharacterization.LastComparedSample
+StreamCharacterization.SampleAgreementMetrics
+
+StreamCharacterization.FileLengthSamples
+StreamCharacterization.FileLengthSeconds
+StreamCharacterization.FileLengthSource
+StreamCharacterization.FileLengthVerified
+StreamCharacterization.HeaderFileLengthSamples
+StreamCharacterization.OfflineReaderFileLengthSamples
+StreamCharacterization.FileLengthAgreement
+
+StreamCharacterization.EOFProducerStatus
+StreamCharacterization.EOFLastProducedSample
+StreamCharacterization.EOFBufferEndBehavior
+StreamCharacterization.EOFDetectionEvidence
+
+StreamCharacterization.Conclusion
+StreamCharacterization.Status
+
+Candidate files
+---------------
+
+source/nf_parse_ctf_res4_payload.m
+source/nf_live_read_ctf_res4_header.m
+validation/nf_characterize_fieldtrip_ctf_stream.m
+io/nf_save_ctf_stream_characterization.m
+
+Required tests
+--------------
+
+- real or fixture res4 parsing;
+- external res4 fallback;
+- header/external disagreement failure;
+- gain vector validity;
+- compensation dimension validity;
+- label uniqueness;
+- exact sample alignment;
+- authoritative total-sample extraction;
+- agreement between independent file-length sources when available;
+- controlled EOF characterization;
+- missing or conflicting file length fails characterization;
+- stream characterization saved and hashed.
+
+Deliverable
+-----------
+
+A validated, auditable description of the actual buffer data representation.
+
+
+======================================================================
+STEP 4 — HUMAN-REVIEWED BRAINSTORM SCIENTIFIC PACKAGE
+======================================================================
+
+Purpose
+-------
+
+Create and explicitly approve the scientific inputs used by the matrix builder.
+
+This is a gated milestone, not a routine helper step.
+
+Required scientific inputs
+--------------------------
+
+- channel file;
+- sensor geometry;
+- head transform;
+- head model;
+- noise covariance;
+- inverse solution;
+- ResultsMat.ImagingKernel;
+- ResultsMat.GoodChannel;
+- ResultsMat.nComponents;
+- ResultsMat.GridAtlas when applicable;
+- source surface or grid;
+- subject or warped-template anatomy;
+- IPS scout;
+- artifact projectors;
+- source-orientation convention.
+
+Artifact-projector review
+-------------------------
+
+The workflow includes:
+
+1. identify or acquire artifact-calibration data;
+2. detect ECG/EOG events;
+3. create artifact epochs;
+4. compute SSP or selected removal components;
+5. inspect topographies and time courses;
+6. select components representing artifacts;
+7. inspect clean-data retention;
+8. save the approved projector state;
+9. document component identities and rationale.
+
+IPS scout review
+----------------
+
+The workflow includes:
+
+- confirm the anatomical IPS definition;
+- confirm hemisphere;
+- confirm atlas and scout name;
+- inspect scout vertices;
+- verify source model;
+- verify orientation convention;
+- verify conversion to ImagingKernel source rows.
+
+Required sign-off artifact
+--------------------------
+
+ScientificSignoff.Status
+ScientificSignoff.Approved
+ScientificSignoff.ApprovedBy
+ScientificSignoff.ApprovedAt
+
+ScientificSignoff.ProjectorDataFiles
+ScientificSignoff.ProjectorComponentIndices
+ScientificSignoff.ProjectorComponentNames
+ScientificSignoff.ProjectorReviewNotes
+
+ScientificSignoff.IPSScoutAtlas
+ScientificSignoff.IPSScoutName
+ScientificSignoff.IPSScoutVertices
+ScientificSignoff.IPSScoutHemisphere
+ScientificSignoff.SourceOrientation
+
+ScientificSignoff.ChannelFileHash
+ScientificSignoff.SensorGeometryHash
+ScientificSignoff.HeadTransformHash
+ScientificSignoff.HeadModelHash
+ScientificSignoff.NoiseCovHash
+ScientificSignoff.InverseResultsHash
+ScientificSignoff.SurfaceHash
+ScientificSignoff.ScoutHash
+
+ScientificSignoff.BrainstormVersion
+ScientificSignoff.PreparationProtocolVersion
+ScientificSignoff.ScientificPackageVersion
+ScientificSignoff.ArtifactVersion
+
+Gate rule
+---------
+
+The matrix builder must reject:
+
+ScientificSignoff.Approved ~= true
+
+Deliverable
+-----------
+
+A versioned, human-approved Brainstorm scientific package.
+
+
+======================================================================
+STEP 5 — BUILD THE INITIAL REAL COMBINEDMATRIX
+======================================================================
+
+Purpose
+-------
+
+Construct the first real full matrix from the approved package.
+
+Recommended entry point
+-----------------------
+
+Spatial = nf_build_brainstorm_combined_matrix(Inputs, Options)
+
+This is an offline preparation function.
+
+Factor construction
+-------------------
+
+1. C_channels
+
+Build a sparse mapping from actual FieldTrip input order to Brainstorm order.
+
+Requirements:
+
+- normalized exact names;
+- one-to-one mapping;
+- explicit excluded channels;
+- missing/duplicate/ambiguous names fail;
+- save mapping table.
+
+2. D_gain
+
+Build:
+
+D_gain = diag(1 ./ gain_chan)
+
+only when stream characterization shows gains are needed.
+
+Requirements:
+
+- matching order;
+- finite nonzero gains;
+- identity when already calibrated;
+- explicit decision record.
+
+3. R_CTF
+
+Build the verified compensation/reference conversion.
+
+Requirements:
+
+- correct MEG/reference channel sets;
+- verified coefficients;
+- identity when no conversion is needed;
+- unsupported grade transitions fail;
+- input/target grade recorded.
+
+4. P_artifact
+
+Build the approved projector.
+
+Requirements:
+
+- approved components only;
+- component identity saved;
+- symmetry checked;
+- idempotence checked;
+- selected components annihilated;
+- identity allowed only with explicit scientific approval.
+
+5. E_good
+
+Build selector from ResultsMat.GoodChannel.
+
+Requirements:
+
+- do not recompute GoodChannel;
+- preserve exact order;
+- kernel column count must match.
+
+6. K_inverse
+
+Load ResultsMat.ImagingKernel.
+
+Requirements:
+
+- finite;
+- valid dimensions;
+- matching model provenance;
+- matching GoodChannel identity.
+
+7. S_IPS
+
+Convert approved IPS vertices into actual source rows.
+
+Requirements:
+
+- use nComponents and GridAtlas as needed;
+- nonempty;
+- valid row indices;
+- preserve all IPS rows;
+- save source rows and scout metadata.
+
+8. Compose
+
+CombinedMatrix
+    = S_IPS
+    * K_inverse
+    * E_good
+    * P_artifact
+    * R_CTF
+    * D_gain
+    * C_channels
+
+All dimensions are validated before multiplication.
+
+Initial artifact contents
+-------------------------
+
+Spatial.CombinedMatrix
+Spatial.Factors
+Spatial.InputChannelNames
+Spatial.BrainstormChannelNames
+Spatial.OutputSignalNames
+Spatial.GoodChannelIndices
+Spatial.IPSVertices
+Spatial.IPSSourceRows
+Spatial.InputRepresentation
+Spatial.InputUnits
+Spatial.InputCompensationGrade
+Spatial.TargetCompensationGrade
+Spatial.CorrectionState
+Spatial.IsIPS = true
+Spatial.IsTechnicalFallback = false
+Spatial.ScientificSignoff
+Spatial.Provenance
+Spatial.ArtifactVersion
+Spatial.PreparationProtocolVersion
+Spatial.BuilderVersion
+Spatial.ScientificPackageVersion
+Spatial.CreatedAt
+
+Deliverable
+-----------
+
+An initial real full CombinedMatrix ready for calibration and validation.
+
+
+======================================================================
+STEP 6 — CALIBRATE AND LOCK VALIDATION THRESHOLDS
+======================================================================
+
+Purpose
+-------
+
+Derive defensible thresholds before the final acceptance run.
+
+Calibration data
+----------------
+
+Use predeclared segments representing:
+
+- known-clean data;
+- ECG-heavy data;
+- EOG/blink-heavy data;
+- movement/jump contamination;
+- ordinary neural activity;
+- target-band activity where available.
+
+Calibrate
+---------
+
+- staged-versus-composed error;
+- Brainstorm-versus-matrix error;
+- projector suppression;
+- clean-signal retention;
+- residual-detector scores;
+- false-positive artifact rate;
+- clean-window retention;
+- minimum number of evaluated clean windows;
+- uncertainty of the clean-window false-positive estimate where practical;
+- full-chain spatial error;
+- filtered-signal error;
+- power RMSE/correlation;
+- baseline mean/std differences;
+- z-score differences;
+- feedback-value differences;
+- iteration runtime;
+- consumer lag;
+- normal interval between FieldTrip buffer-end advances;
+- high-percentile healthy write interval;
+- longest healthy nonadvance interval;
+- producer heartbeat jitter;
+- fileproxy startup jitter;
+- operating-system and MATLAB scheduling pauses;
+- Psychtoolbox latency.
+
+Required threshold artifact
+---------------------------
+
+Thresholds.Version
+Thresholds.CalibrationDatasetHashes
+Thresholds.CalibrationSegments
+Thresholds.CreatedAt
+Thresholds.CreatedBy
+Thresholds.Values
+Thresholds.Rationale
+Thresholds.Locked = true
+Thresholds.HashablePayloadSchemaVersion
+Thresholds.Hash
+
+Thresholds.ArtifactDetector.MinCleanWindowRetention
+Thresholds.ArtifactDetector.MaxFalsePositiveRate
+Thresholds.ArtifactDetector.MinCleanWindows
+Thresholds.ArtifactDetector.MaxUncertainty
+Thresholds.ArtifactDetector.RequiredConfidenceLevel
+
+Thresholds.ProducerLiveness.MaxNoAdvanceSeconds
+Thresholds.ProducerLiveness.HeartbeatTimeoutSeconds
+Thresholds.ProducerLiveness.StartupGraceSeconds
+Thresholds.ProducerLiveness.MinObservedHealthyRuns
+Thresholds.ProducerLiveness.CalibrationStatistics
+
+Lock-enforcement contract
+-------------------------
+
+Before any production run:
+
+1. load the threshold artifact;
+2. canonically serialize the defined hashable payload, excluding the stored
+   Thresholds.Hash field;
+3. recompute its SHA-256 hash;
+4. require the recomputed hash to equal Thresholds.Hash;
+5. require the same hash to equal
+   RTConfig.Validation.RequiredThresholdHash;
+6. require Thresholds.Locked = true;
+7. reject any config-level threshold override;
+8. copy the exact verified threshold artifact into the session bundle.
+
+Required audit fields:
+
+ValidationAudit.ThresholdHashStored
+ValidationAudit.ThresholdHashRecomputed
+ValidationAudit.ThresholdHashRequired
+ValidationAudit.ThresholdHashMatch
+ValidationAudit.ConfigOverrideDetected
+
+ArtifactCalibration.CleanWindowCount
+ArtifactCalibration.FalsePositiveCount
+ArtifactCalibration.FalsePositiveRate
+ArtifactCalibration.FalsePositiveConfidenceLower
+ArtifactCalibration.FalsePositiveConfidenceUpper
+ArtifactCalibration.UncertaintyWidth
+ArtifactCalibration.MinCleanWindowsPassed
+ArtifactCalibration.MaxUncertaintyPassed
+ArtifactCalibration.FalsePositiveRatePassed
+ArtifactCalibration.OverallPass
+
+Rules
+-----
+
+- thresholds are not derived from the final run;
+- thresholds are not modified during final acceptance;
+- any change requires a new version and hash;
+- thresholds distinguish numerical identity from scientific acceptability;
+- thresholds are strict enough to detect real processing differences;
+- thresholds are not set so tightly that normal floating-point noise causes
+  meaningless failure;
+- a failed resting rehearsal is not permission to loosen thresholds;
+- threshold changes require documented scientific rationale, repeated
+  calibration, a new version, a new hash, and rerunning dependent validation;
+- clean-window rejection is checked for systematic concentration around warm-up
+  or phase boundaries rather than true contamination;
+- expert-reviewed real clean data are the primary artifact-detector calibration
+  source;
+- synthetic clean data may supplement targeted tests but cannot replace
+  real-clean-session validation;
+- insufficient clean windows fails calibration;
+- uncertainty wider than the locked maximum fails calibration;
+- an upper false-positive confidence bound above the locked maximum fails
+  calibration;
+- ProducerLiveness thresholds are derived from multiple healthy real-time replay
+  runs and are not selected arbitrarily;
+- liveness thresholds are part of the locked artifact and cannot be changed by
+  the final runner.
+
+Deliverable
+-----------
+
+A locked, versioned, hashed validation-threshold artifact.
+
+
+======================================================================
+STEP 7 — FINAL MATRIX VALIDATION AND VERSIONED ARTIFACT
+======================================================================
+
+Purpose
+-------
+
+Validate the matrix scientifically and numerically, then save the approved
+production artifact.
+
+A. Factor checks
+----------------
+
+Validate:
+
+- all factors finite;
+- all dimensions consistent;
+- mapping valid;
+- gains valid;
+- compensation valid;
+- projector symmetric/idempotent;
+- selected components suppressed;
+- GoodChannel identity;
+- inverse dimensions;
+- IPS rows valid;
+- output count correct.
+
+B. Staged-versus-composed
+-------------------------
+
+Compare:
+
+Y_staged
+    = S_IPS
+    * K_inverse
+    * E_good
+    * P_artifact
+    * R_CTF
+    * D_gain
+    * C_channels
+    * X
+
+against:
+
+Y_combined = CombinedMatrix * X
+
+Use the saved factors. Apply the locked numerical threshold.
+
+C. Independent Brainstorm agreement
+-----------------------------------
+
+Compare Brainstorm-derived IPS output with matrix-derived IPS output for the
+same samples.
+
+Compare:
+
+- source-row time series;
+- row order;
+- orientation/sign convention;
+- clean amplitude;
+- causal theta-filtered signals;
+- per-row power;
+- mean IPS power.
+
+Brainstorm is the authoritative external scientific reference.
+
+Python/MNE is not a parallel required validation track. It may be introduced
+only when Brainstorm-versus-matrix disagreement remains unresolved and a third
+implementation is useful for triangulating whether the discrepancy lies in:
+
+- the matrix builder;
+- the Brainstorm export/reference;
+- CTF compensation conventions;
+- channel mapping;
+- source orientation;
+- filtering or power calculation.
+
+Any tertiary implementation should be restricted to the disputed stage rather
+than duplicating the complete pipeline.
+
+D. Joint artifact-system validation
+-----------------------------------
+
+Use the same labeled artifact segments to evaluate:
+
+1. raw artifact strength;
+2. post-projector artifact strength;
+3. clean-signal retention;
+4. residual-detector score after projection;
+5. residual-detector decision;
+6. expected residual validity.
+
+Required table
+--------------
+
+Segment
+ArtifactType
+RawArtifactMetric
+PostProjectorMetric
+SuppressionRatio
+ResidualDetectorScore
+ResidualDetectorFlag
+ExpectedResidualFlag
+CleanSignalRetention
+Pass
+
+The residual detector is expected to flag contamination that remains
+scientifically unacceptable after projection, not every artifact that existed
+before projection.
+
+E. Canonical exact hashing
+--------------------------
+
+Do not hash MATLAB save-file bytes or depend on MATLAB's internal struct or
+array serialization. Define an explicit cross-version canonical serializer.
+
+Required metadata:
+
+HashMetadata.Algorithm = 'SHA-256'
+HashMetadata.SchemaVersion
+HashMetadata.ImplementationVersion
+HashMetadata.ByteOrder = 'little-endian'
+HashMetadata.TextEncoding = 'UTF-8'
+
+Numeric arrays encode:
+
+- type tag;
+- class name;
+- number of dimensions;
+- dimension values;
+- real/complex flag;
+- sparse/dense flag;
+- canonical little-endian IEEE-754 or integer bytes.
+
+Sparse arrays encode a defined canonical representation:
+
+- dimensions;
+- sorted row indices;
+- sorted column indices;
+- values in the same sorted order.
+
+Strings and character data encode:
+
+- type tag;
+- UTF-8 byte length;
+- UTF-8 bytes.
+
+Structs encode:
+
+- type tag;
+- alphabetically sorted field names;
+- field-name lengths;
+- field-name UTF-8 bytes;
+- recursively encoded field values;
+- explicit empty and missing representations.
+
+Cell arrays encode:
+
+- type tag;
+- dimensions;
+- values in preserved linear index order.
+
+Golden-vector stability and independent verification
+------------------------------------------------------
+
+Create fixed known inputs with expected canonical byte lengths and SHA-256
+digests.
+
+At least one deliberately simple vector must be independently reproduced using
+a second implementation, such as a short Python hashlib script. The independent
+implementation must reproduce:
+
+- the exact canonical byte sequence;
+- the expected byte count;
+- the expected SHA-256 digest.
+
+MATLAB output alone cannot establish the initial golden value.
+
+Store:
+
+HashAudit.GoldenVectorName
+HashAudit.ExpectedByteLength
+HashAudit.ExpectedDigest
+HashAudit.VerifiedByIndependentImplementation
+HashAudit.IndependentImplementationPath
+HashAudit.IndependentVerificationDate
+
+Run golden tests:
+
+- in continuous integration;
+- after a MATLAB version update;
+- after a hash implementation change;
+- on each supported operating system;
+- on the actual final stimulus computer before final acceptance.
+
+Required serializer edge cases
+------------------------------
+
+Explicit golden or canonical-byte tests must cover:
+
+- empty numeric arrays;
+- scalar, row-vector, and column-vector distinctions;
+- logical arrays;
+- all supported integer classes;
+- positive and negative zero;
+- NaN;
+- positive and negative infinity;
+- real and complex arrays;
+- sparse matrices;
+- empty character data;
+- Unicode text;
+- empty and nested cells;
+- empty and nested structs;
+- missing fields versus present-but-empty fields.
+
+NaN handling must be defined explicitly. The recommended contract canonicalizes
+all NaN values of a given numeric class to one documented bit pattern before
+hashing, preventing platform-specific NaN payload differences from altering
+identity.
+
+The production preflight must run the lightweight golden hash self-test.
+
+Required audit fields:
+
+HashAudit.SchemaVersion
+HashAudit.ImplementationVersion
+HashAudit.GoldenSelfTestPassed
+HashAudit.EdgeCaseSelfTestsPassed
+HashAudit.ActualComputerIdentifier
+
+A serializer change requires a new schema version. It must not silently make an
+old artifact appear scientifically changed.
+
+Exact identity hash
+-------------------
+
+Used for:
+
+- matrix identity;
+- baseline binding;
+- artifact-file reuse;
+- provenance checks.
+
+No rounding is applied.
+
+Numerical equivalence
+---------------------
+
+Used for:
+
+- staged/composed agreement;
+- Brainstorm agreement;
+- offline/streaming agreement.
+
+Hashes are not used for numerical tolerance.
+
+F. Versioning
+-------------
+
+Add:
+
+Spatial.ArtifactVersion
+Spatial.PreparationProtocolVersion
+Spatial.BuilderVersion
+Spatial.ScientificPackageVersion
+
+Maintain a changelog describing legitimate rebuilds.
+
+Final artifact
+--------------
+
+The approved artifact includes:
+
+- full matrix;
+- all factors;
+- exact input/output names;
+- correction state;
+- model/scout/projector provenance;
+- sign-off;
+- locked thresholds reference;
+- exact hash;
+- versions;
+- validation results;
+- approval status.
+
+Deliverable
+-----------
+
+The final production CombinedMatrix artifact.
+
+
+======================================================================
+STEP 8 — EXACTLY-ONCE RUNTIME INTEGRATION
+======================================================================
+
+Purpose
+-------
+
+Integrate the real matrix without duplicate fixed corrections.
+
+Source adapter
+--------------
+
+The source adapter:
+
+- reads and validates header;
+- reads sensor chunks;
+- preserves sample/gap/reset metadata;
+- reports observed input representation;
+- performs only declared external temporal preprocessing;
+- does not apply gains/CTF/projector/inverse/IPS when included in the matrix.
+
+Matrix preparation
+------------------
+
+nf_prepare_live_combined_matrix:
+
+- loads the artifact;
+- verifies exact hash;
+- requires IsIPS = true;
+- rejects technical fallback in production;
+- validates raw input channel order;
+- validates correction state;
+- validates model/header compatibility;
+- validates artifact version;
+- exposes IPS output rows/names.
+
+Spatial audit
+-------------
+
+SpatialAudit.MatrixHash
+SpatialAudit.InputRows
+SpatialAudit.OutputRows
+SpatialAudit.ApplicationCount
+SpatialAudit.FirstInputSample
+SpatialAudit.LastInputSample
+SpatialAudit.ExpectedAcceptedChunkCount
+SpatialAudit.ExternalGainApplicationCount
+SpatialAudit.ExternalCTFApplicationCount
+SpatialAudit.ExternalProjectorApplicationCount
+SpatialAudit.DoubleApplicationDetected
+
+Rules
+-----
+
+- one call to nf_rt_apply_spatial per accepted chunk;
+- no later function reapplies the matrix;
+- external fixed-correction counts remain zero when included in the matrix;
+- application count equals accepted chunk count.
+
+Baseline identity
+-----------------
+
+Baseline.MatrixHash
+Baseline.MatrixArtifactPath
+Baseline.InputChannelHash
+Baseline.CorrectionStateHash
+Baseline.HeadModelHash
+Baseline.ScoutHash
+Baseline.ArtifactVersion
+
+Trial rejects any mismatch.
+
+Required tests
+--------------
+
+- technical fallback rejected;
+- matrix hash checked;
+- raw names must match;
+- correction mismatch rejected;
+- exact-once count;
+- no matrix use in baseline/feedback/logging;
+- resting/trial matrix identity match;
+- baseline mismatch rejected.
+
+Deliverable
+-----------
+
+A fail-closed exactly-once real-matrix runtime path.
+
+
+======================================================================
+STEP 9 — COMPLETE CAUSAL OFFLINE REFERENCE
+======================================================================
+
+Purpose
+-------
+
+Build the independent reference for complete-chain streaming comparison.
+
+Reference levels
+----------------
+
+1. characterized sensor input;
+2. spatial IPS output;
+3. causal theta-filtered IPS output;
+4. power-window values;
+5. artifact/validity decisions;
+6. resting baseline;
+7. trial z-scores;
+8. feedback values.
+
+Causal filter contract
+----------------------
+
+The offline reference must use:
+
+- the same IIR/SOS coefficients;
+- one-directional causal filtering;
+- the same initial conditions;
+- the same state propagation;
+- the same warm-up policy;
+- the same sample alignment;
+- the same empirical-delay convention.
+
+The reference must reject or prohibit:
+
+- filtfilt;
+- forward-backward filtering;
+- zero-phase filtering;
+- future-sample padding;
+- whole-file initialization unavailable online;
+- retrospective edge correction.
+
+A zero-phase visualization may exist separately but cannot be used for
+equivalence.
+
+Independence
+------------
+
+The reference may share approved coefficients and matrix artifacts, but it must
+not simply call the full streaming runtime in another loop.
+
+Brainstorm serves as the external scientific reference for:
+
+- CTF corrections;
+- projector;
+- inverse;
+- IPS output.
+
+A separate offline implementation validates:
+
+- causal filtering;
+- state;
+- power;
+- baseline;
+- z-scoring;
+- feedback mapping.
+
+Comparison levels
+-----------------
+
+Compare:
+
+- sensor samples;
+- IPS rows;
+- filtered IPS rows;
+- power;
+- validity/artifact decisions;
+- baseline valid count;
+- baseline mean/std;
+- ZRaw;
+- ZClipped;
+- ZSmoothed;
+- FeedbackValue.
+
+Use exact sample indices and locked thresholds.
+
+Deliverable
+-----------
+
+An independent causal complete-chain reference.
+
+
+======================================================================
+STEP 10 — PRODUCTION REPLAY CONFIGURATION
+======================================================================
+
+Purpose
+-------
+
+Centralize every replay, source, matrix, protocol, display, validation, and
+output setting.
+
+Recommended entry point
+-----------------------
+
+RTConfig = nf_full_fieldtrip_replay_config(...)
+
+Replay section
+--------------
+
+RTConfig.Replay.DatasetPath
+RTConfig.Replay.DatasetHash
+RTConfig.Replay.ProducerMode
+RTConfig.Replay.Speed
+RTConfig.Replay.BlockSeconds
+RTConfig.Replay.ContinuousProducer = true
+RTConfig.Replay.FileLengthSamples
+RTConfig.Replay.FileLengthSource
+RTConfig.Replay.RequireVerifiedFileLength = true
+RTConfig.Replay.MaxManualTransitionSeconds
+RTConfig.Replay.TransitionSafetyMarginSeconds
+RTConfig.Replay.RequiredTrialSeconds
+RTConfig.Replay.RequiredTrialSamples
+RTConfig.Replay.RestingSampleRange
+RTConfig.Replay.Resting.ExtensionSampleRange
+RTConfig.Replay.Resting.AllowConfiguredExtension
+RTConfig.Replay.Resting.MaxExtensionSamples
+RTConfig.Replay.Resting.OnQualityFailure
+RTConfig.Replay.TrialMinimumSamples
+RTConfig.Replay.TransitionPolicy
+RTConfig.Replay.EndOfFilePolicy
+RTConfig.Replay.ExpectedEndSample
+RTConfig.Replay.ReadyTimeoutSeconds
+RTConfig.Replay.StopTimeoutSeconds
+RTConfig.Replay.MaxNoAdvanceSeconds
+RTConfig.Replay.HeartbeatTimeoutSeconds
+RTConfig.Replay.StartupGraceSeconds
+RTConfig.Replay.StallPolicy
+RTConfig.Replay.ProducerLogPath
+RTConfig.Replay.EOFStopReasonPolicy
+
+Resting quality-failure policy
+------------------------------
+
+Preferred final behavior:
+
+1. validate the resting segment in an isolated rehearsal;
+2. use the predeclared segment in the final run;
+3. if quality fails:
+   - use only a predeclared extension range when allowed;
+   - otherwise abort clearly.
+
+Do not search the dataset retrospectively for a cleaner segment.
+
+Default:
+
+RTConfig.Replay.Resting.OnQualityFailure = 'abort'
+
+FieldTrip section
+-----------------
+
+RTConfig.Source.FieldTrip.Host
+RTConfig.Source.FieldTrip.Port
+RTConfig.Source.FieldTrip.FieldTripRoot
+RTConfig.Source.FieldTrip.BufferMPath
+RTConfig.Source.FieldTrip.RequiredBufferRoot
+RTConfig.Source.FieldTrip.TimeoutMs
+RTConfig.Source.FieldTrip.AfterManualStartBacklogPolicy
+RTConfig.Source.FieldTrip.BufferResetPolicy
+RTConfig.Source.FieldTrip.StreamRole
+
+Final transition default
+------------------------
+
+AfterManualStartBacklogPolicy = 'discard_accumulated'
+
+At trial start:
+
+- jump to current buffer end;
+- log skipped range;
+- reset all temporal state;
+- warm up from fresh samples.
+
+Transition-capacity preflight
+-----------------------------
+
+Before launching the producer, compute both the primary and maximum possible
+resting endpoints.
+
+maximum_resting_end_sample must include the complete configured extension when:
+
+Replay.Resting.AllowConfiguredExtension = true
+
+Verify:
+
+maximum_resting_end_sample
++ ceil(MaxManualTransitionSeconds * Fs)
++ PowerWindowSamples
++ RequiredTrialSamples
++ ceil(TransitionSafetyMarginSeconds * Fs)
+<= FileLengthSamples
+
+Required audit fields:
+
+TransitionCapacity.FileLengthSamples
+TransitionCapacity.FileLengthVerified
+TransitionCapacity.PrimaryRestingEndSample
+TransitionCapacity.MaximumRestingEndSample
+TransitionCapacity.ConfiguredExtensionSamples
+TransitionCapacity.WorstCaseRestingExtensionIncluded
+TransitionCapacity.MaxTransitionSamples
+TransitionCapacity.WarmupSamples
+TransitionCapacity.RequiredTrialSamples
+TransitionCapacity.SafetyMarginSamples
+TransitionCapacity.LatestAllowedTrialStartSample
+TransitionCapacity.Pass
+
+If file length is missing/unverified or the worst-case capacity check fails,
+abort before starting the session.
+
+CTF section
+-----------
+
+RTConfig.Source.CTF.InputRepresentation
+RTConfig.Source.CTF.ExpectedCompensationGrade
+RTConfig.Source.CTF.ApplyBlockMeanOutsideMatrix
+RTConfig.Source.CTF.Res4Source
+RTConfig.Source.CTF.ExternalRes4Path
+RTConfig.Source.CTF.ExternalRes4Hash
+
+Spatial section
+---------------
+
+RTConfig.Spatial.Mode = combined_matrix
+RTConfig.Spatial.MatrixSource = precomputed
+RTConfig.Spatial.CombinedMatrixPath
+RTConfig.Spatial.RequireIPS = true
+RTConfig.Spatial.RejectTechnicalFallback = true
+RTConfig.Spatial.RequiredArtifactVersion
+RTConfig.Spatial.RequiredPreparationProtocolVersion
+
+Timing
+------
+
+RTConfig.Fs = 2400
+RTConfig.ChunkSeconds = 0.2
+RTConfig.ChunkSamples = 480
+RTConfig.PowerWindowSeconds = 2
+RTConfig.PowerWindowSamples = 4800
+RTConfig.BufferSeconds
+RTConfig.BufferSamples
+
+Psychtoolbox
+------------
+
+RTConfig.Feedback.Mode = local_circle
+RTConfig.Feedback.Backend = psychtoolbox
+RTConfig.Feedback.Psychtoolbox.ScreenNumber
+RTConfig.Feedback.Psychtoolbox.FullScreen
+RTConfig.Feedback.Psychtoolbox.WindowRect
+RTConfig.Feedback.Psychtoolbox.ExpectedRefreshHz
+RTConfig.Feedback.Psychtoolbox.SkipSyncTests
+RTConfig.Feedback.Psychtoolbox.DevelopmentDisplay
+
+Development display
+-------------------
+
+When DevelopmentDisplay = true:
+
+- screen remains explicit;
+- a small explicit window may be used;
+- the run is labeled development;
+- the strict gate rejects it.
+
+Final acceptance requires:
+
+DevelopmentDisplay = false
+
+and the approved final display configuration.
+
+Artifact monitoring
+-------------------
+
+RTConfig.Artifact.Enable
+RTConfig.Artifact.Methods
+RTConfig.Artifact.Thresholds
+RTConfig.Artifact.RejectFeedbackUpdate
+RTConfig.Artifact.RejectBaselineWindow
+
+Thresholds
+----------
+
+RTConfig.Validation.ThresholdArtifactPath
+RTConfig.Validation.RequiredThresholdHash
+RTConfig.Validation.RequireLockedThresholds = true
+RTConfig.Validation.AllowThresholdOverrides = false
+
+The production configuration must not duplicate mutable threshold values in
+RTConfig.Artifact.Thresholds or RTConfig.Validation.Thresholds. Such fields must
+either reference the verified artifact or match it exactly. Any differing
+runtime override causes preflight failure.
+
+MaxNoAdvanceSeconds, HeartbeatTimeoutSeconds, StartupGraceSeconds, artifact
+detector limits, numerical tolerances, timing limits, and backlog limits must be
+loaded from the verified locked threshold artifact rather than manually edited
+in the final session configuration.
+
+Strict validation
+-----------------
+
+RTConfig.Validation.ProductionMode = true
+RTConfig.Validation.RequireNoSkippedSections = true
+RTConfig.Validation.RequireRealPsychtoolbox = true
+RTConfig.Validation.RequireIPSMatrix = true
+RTConfig.Validation.RequireArtifactSuppressionPass = true
+RTConfig.Validation.RequireFullChainAgreementPass = true
+RTConfig.Validation.RequireNoBacklogGrowth = true
+RTConfig.Validation.FailOnUnexpectedBufferReset = true
+
+EOF policy
+----------
+
+The configuration and implementation must distinguish:
+
+producer_eof_expected
+producer_eof_before_resting_complete
+producer_eof_during_transition
+producer_eof_during_trial_warmup
+producer_eof_before_minimum_trial_duration
+producer_eof_after_valid_trial_completion
+producer_stall
+producer_process_failure
+
+EOF after an already completed approved trial stop may be normal. EOF before any
+required phase completes causes FAIL. EOF is not reported as a generic source
+timeout.
+
+Deliverable
+-----------
+
+One finalized production replay configuration.
+
+
+======================================================================
+STEP 11 — MANAGED PRODUCER LIFECYCLE AND CONTINUOUS LIVENESS
+======================================================================
+
+Purpose
+-------
+
+Make fileproxy reproducible and continuously monitored.
+
+Supported modes
+---------------
+
+managed_matlab_process
+external_manual
+
+Final acceptance should use managed mode when technically feasible.
+
+Producer wrapper
+----------------
+
+The wrapper:
+
+- starts in a separate MATLAB process;
+- initializes FieldTrip paths;
+- starts or connects to the buffer;
+- launches ft_realtime_fileproxy;
+- writes readiness;
+- writes heartbeat/liveness status;
+- records PID;
+- records dataset/config identity;
+- records first/last produced sample;
+- records EOF/error;
+- accepts stop request where possible;
+- can be force-killed by PID when stuck;
+- writes exit status.
+
+Producer status
+---------------
+
+Producer.Mode
+Producer.ProcessID
+Producer.Command
+Producer.StartedAt
+Producer.ReadyAt
+Producer.LastHeartbeatAt
+Producer.StoppedAt
+Producer.ExitCode
+Producer.Status
+Producer.DatasetPath
+Producer.DatasetHash
+Producer.Host
+Producer.Port
+Producer.FirstProducedSample
+Producer.LastProducedSample
+Producer.EndOfFileReached
+Producer.ErrorMessage
+Producer.LogPath
+
+Continuous health
+-----------------
+
+ProducerHealth.LastObservedBufferEndSample
+ProducerHealth.LastAdvanceTime
+ProducerHealth.NoAdvanceDurationSeconds
+ProducerHealth.ExpectedAdvanceInterval
+ProducerHealth.Stalled
+ProducerHealth.ProcessAlive
+ProducerHealth.HeartbeatAgeSeconds
+
+Health-state classification
+---------------------------
+
+No buffer advancement + producer reports EOF:
+    controlled EOF handling
+
+No buffer advancement + producer heartbeat continues + EOF not reported:
+    producer stall
+
+No buffer advancement + heartbeat missing or process dead:
+    producer process failure
+
+Short nonadvance intervals below the locked healthy-jitter threshold are not
+classified as stalls.
+
+Final rule
+----------
+
+Producer stall or producer process failure -> controlled session FAIL
+
+Process liveness, heartbeat freshness, buffer advancement, and explicit EOF
+state are all required inputs to classification.
+
+Zombie/stuck process handling
+-----------------------------
+
+The consumer:
+
+1. sends a graceful stop request;
+2. waits the configured timeout;
+3. checks process and buffer state;
+4. force-kills the process by PID when required;
+5. logs graceful versus forced termination;
+6. preserves the original session error separately from cleanup errors.
+
+Required cleanup fields:
+
+CleanupAudit.ProducerTerminationCompleted
+CleanupAudit.ProducerTerminationMethod
+CleanupAudit.GracefulStopSucceeded
+CleanupAudit.ForceKillAttempted
+CleanupAudit.ForceKillSucceeded
+CleanupAudit.ProducerStillAlive
+CleanupAudit.ProducerTerminationExpectedMode
+CleanupAudit.ProducerTerminationActualMode
+CleanupAudit.TerminationModeMatched
+
+Status semantics
+----------------
+
+Fault-injection test:
+
+- when a stuck producer is intentionally created, successful force-kill means
+  the recovery/cleanup test passed;
+- the test result must still record ProductionEquivalent = false.
+
+Session already failing for another reason:
+
+- force-kill may complete cleanup successfully;
+- the original session remains FAIL;
+- forced termination is recorded separately.
+
+Nominal final acceptance run:
+
+- if graceful stop fails, ProducerTerminationCompleted may still be true after
+  force-kill;
+- however, OverallStatus = FAIL because the nominal producer lifecycle did not
+  satisfy the contract.
+
+Force-kill is therefore a valid recovery mechanism, but not evidence of a clean
+nominal final run.
+
+Buffer ownership
+----------------
+
+Explicitly define:
+
+- which process starts the buffer;
+- who clears stale state;
+- stale-buffer policy;
+- port-conflict policy;
+- producer-failure behavior;
+- consumer-failure behavior.
+
+Required tests
+--------------
+
+- readiness timeout;
+- heartbeat timeout;
+- buffer stops advancing while process remains alive;
+- process dies while buffer remains reachable;
+- stale buffer;
+- normal EOF;
+- graceful stop;
+- forced kill;
+- consumer error triggers producer cleanup;
+- producer log enters final bundle.
+
+Deliverable
+-----------
+
+A continuously monitored producer-buffer-consumer lifecycle.
+
+
+======================================================================
+STEP 12 — FULL CONTINUOUS RESTING-TO-TRIAL ORCHESTRATOR
+======================================================================
+
+Purpose
+-------
+
+Run the real session through one continuous producer.
+
+Recommended entry point
+-----------------------
+
+Session = nf_run_full_fieldtrip_simulation(RTConfig)
+
+Sequence
+--------
+
+1. Load/finalize config.
+
+2. Run static preflight:
+   - production mode;
+   - locked thresholds;
+   - recomputed threshold hash matches the stored and required hashes;
+   - no threshold override is present;
+   - canonical-hash golden and edge-case self-tests pass on the actual
+     execution computer;
+   - at least one golden vector has independent second-implementation
+     verification;
+   - verified total dataset length is available;
+   - worst-case transition-capacity check, including full resting extension,
+     passes;
+   - calibrated producer-liveness thresholds are loaded from the locked
+     threshold artifact;
+   - real matrix;
+   - scientific sign-off;
+   - valid dataset;
+   - valid FieldTrip paths;
+   - valid Psychtoolbox settings;
+   - no unresolved sentinels.
+
+3. Create unique session directory.
+
+4. Save config and environment manifest.
+
+5. Launch producer.
+
+6. Wait for readiness.
+
+7. Confirm header and sample advancement.
+
+8. Initialize live_fieldtrip consumer.
+
+9. Validate:
+   - Fs;
+   - labels;
+   - order;
+   - ctf_res4;
+   - stream representation;
+   - compensation state;
+   - fingerprint;
+   - model compatibility.
+
+10. Load and verify real matrix.
+
+11. Run short matrix preflight:
+    - exact-once application;
+    - finite IPS output;
+    - output dimensions;
+    - no double corrections;
+    - initial timing/backlog.
+
+12. Run resting:
+    - fresh filter;
+    - fresh circular buffer;
+    - no participant feedback;
+    - residual-artifact detection;
+    - baseline accumulation;
+    - configured extension only if allowed;
+    - quality check;
+    - save baseline/logs.
+
+13. If resting quality fails:
+    - apply only the predeclared extension when allowed;
+    - record the exact extension consumed;
+    - otherwise abort;
+    - never search retrospectively for cleaner data.
+
+Required resting-capacity audit:
+
+TransitionCapacity.ActualRestingEndSample
+TransitionCapacity.RestingExtensionUsed
+TransitionCapacity.RestingExtensionConsumedSamples
+
+14. Transition:
+    - producer continues;
+    - show the manual-start prompt and timestamp it;
+    - wait for manual start only up to MaxManualTransitionSeconds;
+    - monitor producer liveness during the pause;
+    - if the limit is exceeded, do not start trial;
+    - save transition audit and stop with transition_timeout;
+    - discard accumulated samples after an in-time manual start;
+    - log the complete skipped sample range;
+    - jump cursor to current live edge;
+    - recompute actual remaining file capacity;
+    - abort before trial if remaining samples cannot support warm-up,
+      RequiredTrialSamples, and the safety margin;
+    - reset filter;
+    - reset circular buffer;
+    - reset power warm-up;
+    - reset z-smoothing;
+    - verify source advancing.
+
+Required transition audit:
+
+TransitionAudit.PromptShownAt
+TransitionAudit.ManualStartAt
+TransitionAudit.DurationSeconds
+TransitionAudit.MaxAllowedSeconds
+TransitionAudit.PauseLimitExceeded
+TransitionAudit.BufferEndAtRestingEnd
+TransitionAudit.BufferEndAtManualStart
+TransitionAudit.FirstTrialSample
+TransitionAudit.SkippedFirstSample
+TransitionAudit.SkippedLastSample
+TransitionAudit.SkippedSampleCount
+TransitionAudit.RemainingFileSamples
+TransitionAudit.RemainingCapacityPass
+
+TransitionCapacity.ActualTransitionSamples
+TransitionCapacity.ActualTrialStartSample
+TransitionCapacity.ActualRemainingSamples
+TransitionCapacity.RequiredRemainingSamples
+TransitionCapacity.RuntimeCapacityPass
+
+15. Initialize trial:
+    - verify baseline identity;
+    - verify matrix identity;
+    - initialize Psychtoolbox;
+    - suppress feedback until fresh valid measure.
+
+16. Run trial:
+    - read chunks;
+    - validate continuity;
+    - continuously classify producer state as healthy jitter, EOF, stall, or
+      process failure;
+    - apply matrix once;
+    - filter causally;
+    - buffer;
+    - detect residual artifacts;
+    - calculate power;
+    - calculate z-scores;
+    - map feedback;
+    - update Psychtoolbox;
+    - log latency/backlog;
+    - monitor producer health;
+    - stop manually, by success, or hard failsafe.
+
+17. Handle EOF explicitly:
+    - record the last produced and last consumed sample;
+    - map EOF to the phase-specific configured stop reason;
+    - fail when EOF occurs before required completion;
+    - stop cleanly rather than waiting for a generic read timeout.
+
+18. Finalize:
+    - save trial;
+    - close display;
+    - close loggers;
+    - request producer stop;
+    - force-kill if required;
+    - generate validation bundle;
+    - generate event timeline.
+
+Unexpected buffer reset
+-----------------------
+
+For development recovery testing:
+
+- detect the backward or discontinuous sample index;
+- record the reset in the audit and timeline;
+- stop accepting pre-reset temporal state;
+- clear filter state;
+- clear circular buffer;
+- clear z-smoothing state;
+- reset warm-up counters;
+- suppress feedback;
+- resume only after a complete fresh power window.
+
+Required assertions:
+
+- no pre-reset sample remains in a post-reset power window;
+- no measure is valid during warm-up;
+- no feedback is issued during warm-up;
+- the first post-reset valid measure uses only post-reset samples.
+
+For final acceptance:
+
+Any unexpected buffer reset -> FAIL
+
+Deliverable
+-----------
+
+One continuous fileproxy resting-to-trial simulation command.
+
+
+======================================================================
+STEP 13 — DEVELOPMENT PSYCHTOOLBOX INTEGRATION
+======================================================================
+
+Purpose
+-------
+
+Test real Psychtoolbox calls before access to the final display setup.
+
+Development mode
+----------------
+
+RTConfig.Feedback.Psychtoolbox.DevelopmentDisplay = true
+
+Requirements:
+
+- explicit screen number;
+- explicit window rectangle;
+- real Screen calls;
+- no silent screen selection;
+- run labeled nonproduction;
+- strict gate rejects the run.
+
+Validate
+--------
+
+- window opens;
+- circle draws;
+- feedback direction correct;
+- update cadence correct;
+- invalid measures do not update;
+- operator stop works;
+- injected feedback error closes window;
+- logging records flips;
+- main loop remains deterministic.
+
+Display concurrency policy
+--------------------------
+
+Keep Psychtoolbox operations in the controlled main loop initially.
+
+Do not introduce MATLAB timer-based asynchronous display unless profiling proves
+the main-loop design cannot meet the budget.
+
+First optimize through:
+
+- precomputed geometry;
+- precreated textures;
+- configured feedback update cadence;
+- predictable flip scheduling;
+- measured flip blocking time.
+
+A separate display process is considered only after measured failure and would
+require its own ordered timestamped communication protocol.
+
+Deliverable
+-----------
+
+A development Psychtoolbox integration pass.
+
+
+======================================================================
+STEP 14 — FINAL PSYCHTOOLBOX DISPLAY VALIDATION
+======================================================================
+
+Purpose
+-------
+
+Validate the intended final stimulus-computer display.
+
+Final requirements
+------------------
+
+- DevelopmentDisplay = false;
+- explicit final screen number;
+- approved fullscreen/window mode;
+- actual screen/rectangle logged;
+- SkipSyncTests false unless explicitly approved;
+- no debug backend;
+- real feedback generated by replayed trial.
+
+Manual checks
+-------------
+
+- correct physical display;
+- correct background;
+- correct fixation;
+- correct outer circle;
+- correct circle geometry;
+- increasing theta feedback produces intended change;
+- invalid measures do not create misleading updates;
+- stale-feedback policy is correct;
+- operator stop works;
+- normal close works;
+- forced-error close works.
+
+Display audit
+-------------
+
+FeedbackAudit.ScreenNumber
+FeedbackAudit.WindowRect
+FeedbackAudit.RefreshInterval
+FeedbackAudit.FlipRequestedAt
+FeedbackAudit.FlipCompletedAt
+FeedbackAudit.FlipMissed
+FeedbackAudit.MeasureCreatedAt
+FeedbackAudit.EndToEndLatencyMs
+FeedbackAudit.LatencyBudgetExceeded
+FeedbackAudit.UpdateCount
+
+Deliverable
+-----------
+
+A final Psychtoolbox audit and operator checklist.
+
+
+======================================================================
+STEP 15 — FULL-LOOP PERFORMANCE, BACKLOG, AND RESILIENCE
+======================================================================
+
+Purpose
+-------
+
+Prove the entire consumer keeps pace with real-time replay.
+
+Full-loop metrics
+-----------------
+
+BufferSamplesAvailable
+BufferEndSample
+ConsumerCursor
+ConsumerLagSamples
+ConsumerLagSeconds
+ReadRuntimeSeconds
+CorrectionRuntimeSeconds
+SpatialRuntimeSeconds
+FilterRuntimeSeconds
+BufferRuntimeSeconds
+ArtifactRuntimeSeconds
+PowerRuntimeSeconds
+ZScoreRuntimeSeconds
+LoggingRuntimeSeconds
+FeedbackRuntimeSeconds
+TotalIterationSeconds
+MissedDeadlineFlag
+ProducerAlive
+ProducerStalled
+BufferResetFlag
+GapFlag
+DroppedChunkFlag
+
+Acceptance behavior
+-------------------
+
+- replay speed = 1.0;
+- no unhandled reset;
+- no unexplained gap;
+- no dropped chunks in normal final run;
+- no increasing long-term lag;
+- bounded maximum lag;
+- median and high-percentile runtime pass locked thresholds;
+- display latency passes;
+- producer remains live;
+- resting and trial complete.
+
+Robustness tests
+----------------
+
+- producer starts late;
+- producer stalls mid-resting;
+- producer stalls mid-trial;
+- producer dies;
+- EOF;
+- header change;
+- channel reorder;
+- buffer reset;
+- timeout;
+- sample gap;
+- Psychtoolbox error;
+- logger error;
+- operator stop;
+- success stop;
+- hard failsafe;
+- long manual pause;
+- partial cleanup failure;
+- zombie producer process;
+- deliberate buffer reset followed by verified state clearing;
+- maximum allowed manual transition pause;
+- manual transition overrun producing transition_timeout;
+- insufficient remaining-file capacity before trial.
+
+The deliberate buffer-reset recovery test must verify that no pre-reset sample
+enters a post-reset valid measure and that feedback remains suppressed until a
+complete fresh window exists.
+
+Robustness-test result semantics
+--------------------------------
+
+Every deliberately destructive robustness test records:
+
+TestResult.TestClass = 'robustness'
+TestResult.ExpectedProductionFailure = true
+TestResult.RecoveryBehaviorPassed
+TestResult.ProductionEquivalent = false
+
+A deliberately stuck producer followed by successful force-kill may report:
+
+RecoveryBehaviorPassed = true
+TestStatus = 'PASS'
+ProductionEquivalent = false
+
+The report must state:
+
+'This isolated robustness test passed because the expected failure was detected
+and cleaned up correctly. It is not a production-equivalent session PASS.'
+
+A nominal final run requiring force-kill still fails the producer lifecycle
+requirement. Cleanup completion and graceful producer behavior are reported
+separately.
+
+Final acceptance rule
+---------------------
+
+Recovery behavior may be tested separately, but the final PASS run must not
+contain:
+
+- producer stall;
+- unexpected reset;
+- unexplained gap;
+- dropped chunk;
+- unbounded backlog;
+- forced producer kill caused by normal-run failure.
+
+Deliverable
+-----------
+
+A full-loop timing, backlog, liveness, and resilience report.
+
+
+======================================================================
+STEP 16 — STRICT FINAL PRODUCTION-EQUIVALENT FIELDTRIP REPLAY
+======================================================================
+
+Purpose
+-------
+
+Run the definitive full simulation and issue an unambiguous PASS or FAIL.
+
+Strict PASS requirements
+------------------------
+
+1. Actual recorded CTF dataset used.
+
+2. Dataset hash recorded.
+
+3. One continuous fileproxy producer used.
+
+4. Producer readiness passed.
+
+5. Producer remained live.
+
+6. Buffer samples advanced throughout required phases.
+
+7. Header/Fs/channel validation passed.
+
+8. ctf_res4 source and identity passed.
+
+9. Stream representation passed.
+
+10. Real matrix loaded.
+
+11. Matrix IsIPS = true.
+
+12. Matrix IsTechnicalFallback = false.
+
+13. ScientificSignoff.Approved = true.
+
+14. Matrix artifact version passed.
+
+15. Matrix hash passed.
+
+16. Matrix/model/scout/projector provenance passed.
+
+17. Staged/composed matrix agreement passed.
+
+18. Brainstorm/matrix agreement passed.
+
+19. Artifact suppression passed.
+
+20. Clean-signal retention passed.
+
+21. Residual-artifact detector passed.
+
+22. Matrix applied exactly once.
+
+23. No duplicate fixed correction occurred.
+
+24. Complete causal offline/streaming agreement passed.
+
+25. Resting baseline quality passed.
+
+26. Resting failure policy was not violated.
+
+27. Transition backlog was discarded and logged.
+
+28. Trial temporal state was fresh.
+
+29. Resting/trial matrix identity matched.
+
+30. Trial produced finite power and z-scores.
+
+31. Invalid/artifact measures did not update feedback.
+
+32. Real final Psychtoolbox display passed.
+
+33. Display latency passed.
+
+34. No unbounded backlog occurred.
+
+35. No producer stall occurred.
+
+36. No unexpected buffer reset occurred.
+
+37. No unexplained sample gap occurred.
+
+38. Trial stopped through an approved rule.
+
+39. Final logs were saved.
+
+40. Producer stopped cleanly.
+
+41. Display/loggers/resources closed.
+
+42. Plain-language timeline generated.
+
+43. No mandatory section was SKIPPED.
+
+44. The Step 0 technical matrix used production-representative dimensions,
+    class, and density.
+
+45. The repeated performance smoke test passed using the actual real-matrix
+    dimensions and matrix.
+
+46. The threshold artifact's recomputed hash matched both its stored hash and
+    RTConfig.Validation.RequiredThresholdHash.
+
+47. No threshold override was detected.
+
+48. The canonical-hash golden self-test passed in the execution environment.
+
+49. Manual transition duration did not exceed MaxManualTransitionSeconds.
+
+50. Preflight proved sufficient file capacity for maximum transition, warm-up,
+    required trial duration, and safety margin.
+
+51. The actual remaining sample count at trial start remained sufficient.
+
+52. The producer stopped gracefully during the nominal final run.
+
+53. At least one canonical hash golden vector was verified by an independent
+    implementation.
+
+54. Canonical hash edge-case tests passed on the actual stimulus computer.
+
+55. Transition-capacity preflight used the maximum possible configured resting
+    endpoint, including the complete allowed extension.
+
+56. Runtime transition capacity recorded actual resting-extension consumption.
+
+57. Producer-liveness thresholds came from the verified locked calibration
+    artifact.
+
+58. Producer nonadvance was correctly classified as healthy jitter, EOF, stall,
+    or process failure.
+
+59. Artifact-detector uncertainty passed its locked maximum-uncertainty gate.
+
+60. Artifact-detector calibration used at least the locked minimum number of
+    clean windows.
+
+61. The upper confidence bound for the artifact false-positive rate passed.
+
+62. Total dataset length was extracted from authoritative metadata and verified.
+
+63. EOF, when encountered, was classified with a distinct phase-specific stop
+    reason.
+
+64. No robustness-only test result was interpreted as a production session PASS.
+
+65. Producer termination mode matched the nominal graceful-stop requirement.
+
+Strict status rules
+-------------------
+
+- required FAIL -> OverallStatus = FAIL;
+- required SKIPPED -> OverallStatus = FAIL;
+- technical fallback -> FAIL;
+- development display -> FAIL;
+- debug feedback backend -> FAIL;
+- missing sign-off -> FAIL;
+- missing locked thresholds -> FAIL;
+- threshold hash mismatch -> FAIL;
+- threshold override detected -> FAIL;
+- hash golden or edge-case self-test failure -> FAIL;
+- missing independent golden-vector verification -> FAIL;
+- unverified or conflicting file length -> FAIL;
+- liveness thresholds not loaded from locked artifact -> FAIL;
+- artifact-detector uncertainty failure -> FAIL;
+- insufficient clean calibration windows -> FAIL;
+- artifact false-positive upper confidence-bound failure -> FAIL;
+- EOF before required phase completion -> FAIL;
+- robustness-only result interpreted as production PASS -> invalid report and
+  FAIL;
+- transition timeout -> FAIL;
+- insufficient remaining file capacity -> FAIL;
+- matrix mismatch -> FAIL;
+- producer stall -> FAIL;
+- unexpected reset -> FAIL;
+- missing timeline/audit bundle -> FAIL;
+- nominal producer graceful-stop failure -> FAIL even when force-kill completes
+  cleanup;
+- cleanup failure -> FAIL unless explicitly classified before the run as
+  noncritical, which should be rare.
+
+Final output bundle
+-------------------
+
+summary.mat
+summary.csv
+README_full_fieldtrip_simulation.txt
+session_timeline.html
+environment_manifest.txt
+finalized_config.mat
+locked_thresholds.mat
+threshold_validation_audit.mat
+hash_self_test_audit.mat
+hash_independent_verification.txt
+hash_edge_case_results.csv
+transition_capacity_audit.mat
+file_length_verification.mat
+eof_audit.csv
+producer_status.mat
+producer_health.csv
+producer_log.txt
+header_snapshot.mat
+stream_characterization.mat
+scientific_signoff.mat
+spatial_artifact_summary.mat
+matrix_factor_validation.csv
+matrix_staged_comparison.csv
+brainstorm_spatial_comparison.csv
+artifact_suppression.csv
+residual_artifact_validation.csv
+full_chain_streaming_comparison.csv
+resting_summary.csv
+baseline.mat
+transition_audit.csv
+trial_measures.csv
+feedback_audit.csv
+latency_backlog.csv
+cleanup_audit.csv
+robustness_test_classification.csv
+figures/
+
+Deliverable
+-----------
+
+A strict PASS bundle proving production-equivalent FieldTrip simulation.
+
+
+======================================================================
+6. PLAIN-LANGUAGE EVENT TIMELINE
+======================================================================
+
+The final bundle must contain a readable timeline, preferably HTML.
+
+It should show:
+
+- producer launch;
+- producer ready;
+- first advancing sample;
+- header validation;
+- stream characterization;
+- matrix loading;
+- matrix preflight;
+- resting start/end;
+- artifact-invalidated periods;
+- baseline extension if used and exact samples consumed;
+- baseline finalization;
+- manual transition prompt and actual pause duration;
+- maximum permitted transition duration;
+- skipped transition sample range;
+- remaining file capacity at trial start;
+- trial state reset;
+- trial warm-up;
+- first valid feedback;
+- feedback flips;
+- latency warnings;
+- producer health warnings;
+- healthy pacing jitter classifications;
+- EOF classification and last produced/consumed samples;
+- stop reason;
+- producer stop;
+- cleanup completion.
+
+Plots should align:
+
+- sample index/time;
+- phase boundaries;
+- consumer lag;
+- iteration runtime;
+- valid/invalid measures;
+- artifact flags;
+- theta power;
+- z-score;
+- feedback values;
+- flip times.
+
+The timeline is an audit aid. MAT/CSV outputs remain the machine-readable source
+of truth.
+
+
+======================================================================
+7. REQUIRED TEST SUITES
+======================================================================
+
+A. Unit tests
+-------------
+
+- correction-state compatibility;
+- external res4 configuration;
+- canonical serialization;
+- independent golden-vector reproduction;
+- serializer edge cases including empty values, NaN, Inf, negative zero,
+  complex data, sparse arrays, Unicode, cells, and structs;
+- hash schema/version handling;
+- cross-version golden hash vectors;
+- SHA-256 exact hashing;
+- artifact-version validation;
+- strong baseline matrix binding;
+- channel mapping;
+- gain matrix;
+- CTF compensation matrix;
+- projector properties;
+- GoodChannel selector;
+- IPS selector;
+- locked threshold validation;
+- threshold hash recomputation;
+- runtime threshold override rejection;
+- causal offline filter enforcement;
+- residual-artifact detector;
+- artifact false-positive confidence interval and uncertainty gate;
+- minimum-clean-window gate;
+- producer-liveness threshold artifact;
+- resting extension policy;
+- explicit screen configuration;
+- development display rejection;
+- no-SKIP strict status;
+- continuous producer config;
+- producer heartbeat parsing;
+- buffer-reset state clearing.
+
+B. Integration tests
+--------------------
+
+- early full-chain skeleton;
+- representative performance smoke test;
+- stream characterization;
+- exact-once audit;
+- correction duplicate rejection;
+- scientific sign-off gate;
+- threshold artifact loading;
+- matrix version mismatch;
+- complete causal reference;
+- producer readiness;
+- producer heartbeat/liveness;
+- healthy pacing jitter classification;
+- explicit EOF classification;
+- producer stall;
+- producer process failure;
+- maximum transition pause;
+- transition timeout;
+- remaining-file capacity rejection;
+- graceful/forced stop;
+- continuous transition;
+- backlog discard;
+- fresh trial state;
+- development Psychtoolbox;
+- strict gate rejects fallback;
+- strict gate rejects development display;
+- strict gate rejects mandatory SKIP;
+- robustness PASS cannot become ProductionEquivalent PASS;
+- partial failure cleanup.
+
+C. Real environment tests
+-------------------------
+
+1. real stream characterization;
+2. real scientific package review;
+3. real matrix offline validation;
+4. short real matrix replay;
+5. full-chain replay without feedback;
+6. resting-only validation;
+7. development Psychtoolbox;
+8. final-display Psychtoolbox;
+9. short continuous resting-to-trial rehearsal;
+10. full final replay.
+
+
+======================================================================
+8. RECOMMENDED EXECUTION RUNS
+======================================================================
+
+Run 0 — Orchestration skeleton
+------------------------------
+
+Development-only full chain using a production-representative test matrix and
+development display. Exercise the maximum permitted transition pause, excessive
+pause failure, flip auditing, and early timeline generation.
+
+Run 1 — Early performance smoke
+-------------------------------
+
+Representative matrix and RT core timing.
+
+Run 2 — Stream characterization
+-------------------------------
+
+Actual fileproxy header/data representation.
+
+Run 3 — Scientific-package sign-off
+------------------------------------
+
+Human review of projector, inverse, and IPS scout.
+
+Run 4 — Initial matrix construction
+-----------------------------------
+
+Build all factors and compose the matrix. Then repeat the representative
+performance smoke test and orchestration skeleton using the actual matrix
+shape.
+
+Run 5 — Threshold calibration
+-----------------------------
+
+Known-clean and known-artifact segments; lock thresholds.
+
+Run 6 — Final matrix validation
+-------------------------------
+
+Factor, staged/composed, Brainstorm, and artifact-system validation.
+
+Run 7 — Short real matrix replay
+--------------------------------
+
+live_fieldtrip + real matrix + exact-once audit.
+
+Run 8 — Complete chain without feedback
+---------------------------------------
+
+Causal filter/power/offline comparison.
+
+Run 9 — Resting-only replay
+---------------------------
+
+Validate final resting segment and baseline quality.
+
+Run 10 — Development Psychtoolbox
+---------------------------------
+
+Real Screen calls in explicit development window.
+
+Run 11 — Short continuous rehearsal
+-----------------------------------
+
+One producer across shortened resting, transition, and trial.
+
+Run 12 — Final display validation
+---------------------------------
+
+Approved final physical display.
+
+Run 13 — Full final replay
+--------------------------
+
+Strict production-equivalent acceptance run.
+
+
+======================================================================
+9. COMPONENTS THAT SHOULD REMAIN CONCEPTUALLY STABLE
+======================================================================
+
+rt/nf_rt_apply_spatial.m
+    remains one matrix multiplication plus audit.
+
+rt/nf_rt_filter_apply.m
+    remains causal and stateful within each phase.
+
+rt/nf_rt_compute_power.m
+    remains per-row power followed by mean row power.
+
+rt/nf_rt_process_chunk.m
+    preserves:
+    validate
+    -> declared external temporal preprocessing
+    -> spatial
+    -> filter
+    -> circular buffer
+    -> artifact decision
+    -> power
+    -> measure
+
+buffer functions
+    preserve circular-buffer and gap logic.
+
+baseline functions
+    preserve valid-measure accumulation and quality checking, with stronger
+    identity binding.
+
+feedback mapping
+    remains separate from the RT core.
+
+safety/logging/cleanup
+    are extended, not redesigned.
+
+MatrixSource = compute_live
+    may remain unsupported.
+
+
+======================================================================
+10. PROHIBITED SHORTCUTS
+======================================================================
+
+The milestone cannot be declared complete by:
+
+- using TechnicalFallback;
+- using channel average or single channel;
+- loading IsIPS = false;
+- proceeding without scientific sign-off;
+- omitting the approved projector;
+- validating the projector only dimensionally;
+- choosing thresholds from the final run;
+- modifying locked thresholds during final acceptance;
+- using weak matrix fingerprints;
+- generating every golden hash vector only with the serializer under test;
+- skipping canonical edge-case tests on the final stimulus computer;
+- confusing exact hash identity with numerical equivalence;
+- using filtfilt or zero-phase filtering as the streaming reference;
+- validating only synthetic theta;
+- validating only filtering/power;
+- using the same full runtime code as the offline reference;
+- using DebugPlot instead of Psychtoolbox;
+- using DevelopmentDisplay in final acceptance;
+- silently selecting a screen;
+- using separate producers for resting and trial in the final run;
+- calculating transition capacity from only the primary resting endpoint when
+  an extension is allowed;
+- preserving stale transition backlog;
+- carrying resting filter/buffer state into trial;
+- choosing producer-liveness thresholds arbitrarily;
+- treating EOF as a generic timeout;
+- ignoring producer stalls;
+- recovering from an unexpected final-run buffer reset and still reporting PASS;
+- silently searching for another resting segment;
+- heuristically searching for a res4 file;
+- double-applying gains, CTF compensation, or projector;
+- hardcoding paths, endpoints, channels, or displays;
+- allowing required validation to be SKIPPED;
+- treating a robustness recovery PASS as a production-equivalent session PASS;
+- accepting artifact-detector point estimates with inadequate sample size or
+  excessive uncertainty;
+- reporting PASS when cleanup failed.
+
+
+======================================================================
+11. FINAL ACCEPTANCE CHECKLIST
+======================================================================
+
+Early integration
+-----------------
+
+[ ] Full-chain development skeleton passes.
+[ ] Skeleton matrix dimensions/class/density are production-representative.
+[ ] Maximum and excessive transition-pause tests pass.
+[ ] Early timeline and flip audit are generated.
+[ ] Representative core timing passes.
+[ ] Repeated timing passes with the actual real matrix.
+
+Scientific preparation
+----------------------
+
+[ ] Stream representation characterized.
+[ ] ctf_res4 source verified.
+[ ] Brainstorm package complete.
+[ ] Human sign-off approved.
+[ ] IPS scout approved.
+[ ] Projector components approved.
+[ ] Scientific package version recorded.
+
+Thresholds
+----------
+
+[ ] Calibration segments declared.
+[ ] Thresholds derived before final run.
+[ ] Threshold artifact locked.
+[ ] Threshold hash recorded.
+[ ] Threshold hash recomputation passes.
+[ ] Required threshold hash matches.
+[ ] No threshold override is detected.
+[ ] Producer-liveness thresholds are present in the locked artifact.
+[ ] Clean-window retention criterion passes.
+[ ] Minimum clean-window count passes.
+[ ] Artifact false-positive uncertainty passes.
+[ ] Artifact false-positive upper confidence bound passes.
+
+Matrix
+------
+
+[ ] Real matrix built.
+[ ] IsIPS = true.
+[ ] IsTechnicalFallback = false.
+[ ] Artifact version recorded.
+[ ] Exact hash passes.
+[ ] Hash schema/version recorded.
+[ ] At least one golden vector has independent verification.
+[ ] Hash golden self-test passes.
+[ ] Hash edge-case tests pass on the final stimulus computer.
+[ ] Factor checks pass.
+[ ] Staged/composed comparison passes.
+[ ] Brainstorm comparison passes.
+[ ] Artifact suppression passes.
+[ ] Clean retention passes.
+[ ] Residual detector validation passes.
+[ ] Exactly-once audit passes.
+
+Producer and buffer
+-------------------
+
+[ ] One continuous producer used.
+[ ] Producer readiness passes.
+[ ] Heartbeat passes.
+[ ] Buffer advancement passes.
+[ ] No stall occurs.
+[ ] Total dataset length is authoritatively extracted and verified.
+[ ] EOF behavior is explicitly classified.
+[ ] Healthy jitter, EOF, stall, and process failure are distinguished.
+[ ] Producer stops gracefully in the nominal final run.
+[ ] Forced-termination recovery is separately tested.
+
+Resting
+-------
+
+[ ] Fresh state.
+[ ] Full matrix used.
+[ ] Artifact windows rejected.
+[ ] Predeclared resting segment used.
+[ ] Only configured extension used, if any.
+[ ] Exact resting-extension consumption is recorded.
+[ ] Baseline quality passes.
+[ ] Matrix identity stored.
+
+Transition
+----------
+
+[ ] Producer remains continuous.
+[ ] Transition-capacity preflight uses the maximum possible resting endpoint.
+[ ] Manual start works within the configured maximum.
+[ ] Actual remaining file capacity passes before trial.
+[ ] Accumulated backlog discarded.
+[ ] Skipped range logged.
+[ ] Cursor moves to live edge.
+[ ] Filter/buffer/z-state reset.
+[ ] Fresh warm-up enforced.
+
+Trial
+-----
+
+[ ] Baseline identity matches.
+[ ] Matrix identity matches.
+[ ] Finite power and z-scores.
+[ ] Invalid/artifact measures do not update feedback.
+[ ] Approved stop rule used.
+
+Psychtoolbox
+------------
+
+[ ] Final display mode, not development.
+[ ] Explicit screen.
+[ ] Correct geometry and direction.
+[ ] Flip latency passes.
+[ ] Operator stop works.
+[ ] Normal/error close works.
+
+Performance
+-----------
+
+[ ] Real-time replay speed.
+[ ] No unbounded backlog.
+[ ] No unexplained gap.
+[ ] No dropped chunk.
+[ ] No unexpected reset.
+[ ] Deliberate reset recovery test clears all temporal state correctly.
+[ ] Full-loop timing passes.
+
+Validation and outputs
+----------------------
+
+[ ] Causal offline reference used.
+[ ] Full-chain agreement passes.
+[ ] No required SKIP.
+[ ] Robustness-test PASS results are labeled ProductionEquivalent = false.
+[ ] Timeline generated.
+[ ] Provenance complete.
+[ ] Logs complete.
+[ ] Cleanup complete.
+[ ] Strict OverallStatus = PASS.
+
+
+======================================================================
+12. FINAL DELIVERABLE
+======================================================================
+
+The milestone is complete when one top-level command produces one timestamped
+session folder proving:
+
+- which CTF dataset was replayed;
+- what the buffer contained;
+- the authoritative verified total dataset length;
+- which res4 metadata were used;
+- which scientific package was approved;
+- which matrix version and exact hash were used;
+- which gains, compensation, projector, inverse, and IPS scout were included;
+- that the matrix matched the stream and model;
+- that the matrix was applied exactly once;
+- that canonical hashing passed independently verified golden and edge-case
+  tests on the final computer;
+- that artifact suppression and residual detection worked together with
+  sufficient clean-window evidence and acceptable uncertainty;
+- that the causal offline and streaming chains agreed;
+- that the resting baseline passed;
+- that the maximum transition duration and remaining-file capacity were
+  validated;
+- that transition backlog was discarded correctly;
+- that trial state was fresh;
+- that real Psychtoolbox feedback worked;
+- that the producer remained live;
+- that healthy jitter, EOF, stalls, and process failure were classified
+  correctly;
+- that the consumer kept pace;
+- how the trial stopped;
+- that all resources cleaned up;
+- whether producer shutdown was graceful or forced;
+- that the threshold artifact was cryptographically verified and not
+  overridden;
+- that the hash implementation passed its golden self-test;
+- that no mandatory validation was skipped;
+- that no robustness-only PASS was misrepresented as a production-equivalent
+  session PASS.
+
+When the strict report returns OverallStatus = PASS, the full
+production-equivalent FieldTrip simulation milestone is complete.
+
+The next phase is live MEG-room integration. That phase should reuse the same
+downstream program and replace only the replay producer with the live acquisition
+path, together with the appropriate session-specific configuration and
+CombinedMatrix.
+
+
+======================================================================
+13. PLAN FREEZE AND CHANGE CONTROL
+======================================================================
+
+This Version 1.0 specification is frozen for implementation.
+
+Future changes require:
+
+1. a new Plan.Version;
+2. a dated changelog entry;
+3. the reason for the change;
+4. the affected requirements and tests;
+5. whether previously produced artifacts, thresholds, matrices, baselines, or
+   validation results must be regenerated;
+6. explicit confirmation that the change does not silently weaken the strict
+   production-equivalence acceptance gate.
+
+Implementation should now proceed incrementally against the defined steps and
+deliverables rather than continuing to expand the base plan.

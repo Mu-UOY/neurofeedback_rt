@@ -1,0 +1,2756 @@
+UPDATED STEP 3D LIVE FEEDBACK IMPLEMENTATION PLAN
+Clean implementation version
+
+
+============================================================
+0. PURPOSE
+============================================================
+
+
+Goal:
+Build the first full live MEG neurofeedback self-test.
+
+
+This is Step 3D:
+
+
+live FieldTrip/Brainstorm MEG acquisition
+→ live chunks
+→ validated real-time processing core
+→ live resting baseline
+→ live trial z-scoring
+→ green disk feedback
+→ manual/success-based stopping
+→ complete logs and audit files
+
+
+This is not an offline Step 2D rehearsal.
+Offline, simulated, and mock-live paths are development tools only.
+
+
+Core project rule:
+The data source can change, but the real-time processing core must remain the same.
+
+
+Preserved interface:
+
+
+[chunk, Source] = nf_get_meg_chunk(Source, RTConfig)
+[Measure, RT] = nf_rt_process_chunk(chunk, RT, RTConfig)
+
+
+The new live work should wrap around the validated core.
+Do not rewrite the core algorithm.
+
+
+============================================================
+1. STEP 3D TARGET
+============================================================
+
+
+The first full live feedback delivery is successful when this command works in the MEG room:
+
+
+nf_run_live_self_test
+
+
+It should perform:
+
+
+1. Start up project paths.
+2. Build live config.
+3. Finalize/validate config once.
+4. Connect to live FieldTrip/Brainstorm buffer.
+5. Confirm Fs = 2400 Hz.
+6. Confirm channel labels/order.
+7. Confirm sample count advances.
+8. Prepare/validate live CombinedMatrix path.
+9. Run live resting baseline.
+10. Finalize and save Baseline.
+11. Run live trial.
+12. Compute theta power from a 2-second / 4800-sample window.
+13. Compute ZRaw / ZClipped / ZSmoothed.
+14. Map ZSmoothed to Shibata/Watanabe-style green disk size.
+15. Display feedback.
+16. Stop manually or by explicit success criterion.
+17. Use 15–30 minute hard failsafe only as backup.
+18. Save complete logs, traces, config, baseline, trial, stop reason, and session audit.
+19. Close feedback display safely.
+
+
+The first live delivery is not a polished participant experiment.
+It is a technical self-test proving that the validated IIR/SOS real-time neurofeedback core can run on real 2400 Hz MEG chunks and drive actual visual feedback.
+
+
+============================================================
+2. LIVE SAMPLING AND WINDOW RULES
+============================================================
+
+
+Live MEG sampling rate:
+
+
+Fs = 2400 Hz
+
+
+Feedback power window:
+
+
+PowerWindowSeconds = 2.0
+PowerWindowSamples = 4800
+
+
+Reason:
+
+
+2.0 seconds * 2400 samples/second = 4800 samples
+
+
+Live chunking:
+
+
+ChunkSeconds = 0.2
+ChunkSamples = 480
+
+
+Reason:
+
+
+0.2 seconds * 2400 samples/second = 480 samples
+
+
+Window/chunk relationship:
+
+
+PowerWindowSamples / ChunkSamples = 4800 / 480 = 10 chunks per feedback window
+
+
+Initial circular buffer:
+
+
+BufferSeconds = 2.0
+BufferSamples = 4800
+
+
+Rule:
+The scientific feedback window is exactly 2 seconds = 4800 samples.
+The circular buffer may later be increased to 2.5–3.0 seconds if delay correction or diagnostics require extra history, but the power window remains 2 seconds unless explicitly changed.
+
+
+These timing rules apply to:
+- live_fieldtrip
+- mock_live_buffer
+
+
+The mock-live path must not pass with timing that would fail in the MEG room.
+
+
+Default strictness:
+
+
+RTConfig.Debug.AllowNonLiveTimingInMock = false;
+
+
+============================================================
+3. CORE ALGORITHM ORDER — DO NOT CHANGE
+============================================================
+
+
+The live work must preserve the existing real-time algorithm order.
+
+
+Required order:
+
+
+1. Source returns chunk.Data in the configured live channel/correction state.
+
+
+2. Source adapter may apply candidate CTF correction only if explicitly configured and logged.
+
+
+3. Standard chunk is passed to:
+
+
+   [Measure, RT] = nf_rt_process_chunk(chunk, RT, RTConfig)
+
+
+4. Inside nf_rt_process_chunk:
+   apply Spatial.CombinedMatrix / spatial projection.
+
+
+5. Inside nf_rt_process_chunk:
+   apply IIR/SOS filter statefully across chunks.
+
+
+6. Inside nf_rt_process_chunk:
+   append filtered projected data to circular buffer.
+
+
+7. Inside nf_rt_process_chunk:
+   extract latest 2-second / 4800-sample power window.
+
+
+8. Inside nf_rt_process_chunk:
+   reject invalid, warmup, gap, dropped, or artifact windows.
+
+
+9. Inside nf_rt_process_chunk:
+   compute target-band power / PowerPerSignal.
+
+
+10. During resting:
+    valid Measure.Power values update BaselineAcc.
+
+
+11. At end of resting:
+    BaselineAcc is trimmed/rejected/finalized into Baseline.
+
+
+12. During trial:
+    nf_rt_process_chunk computes z-score using Baseline.
+
+
+13. Z-score order:
+    ZRaw → ZClipped → ZSmoothed
+
+
+14. Feedback remains outside nf_rt_process_chunk.
+
+
+15. After nf_rt_process_chunk returns:
+    nf_feedback_map_to_display maps Measure.ZSmoothed to FeedbackValue/radius.
+
+
+16. Feedback display draws green disk.
+
+
+17. Logger saves chunk metadata, Measure fields, traces, and session audit files.
+
+
+Final live trial order:
+
+
+live FieldTrip chunk
+→ candidate source correction / channel selection
+→ CombinedMatrix / spatial projection
+→ stateful IIR/SOS
+→ circular buffer
+→ 2-second / 4800-sample theta power
+→ Baseline z-score
+→ ZSmoothed
+→ map ZSmoothed to green disk radius
+→ draw feedback
+→ log everything
+
+
+Hard rules:
+- Do not move feedback drawing inside nf_rt_process_chunk.
+- Do not assign FeedbackValue inside nf_rt_process_chunk.
+- Do not branch nf_rt_process_chunk into a special live/single-channel path.
+- Live fallback modes must still use the CombinedMatrix contract.
+
+
+Tests:
+- tests/test_live_core_order_preserved.m
+- tests/test_feedback_stays_outside_rt_core_live.m
+- tests/test_mock_live_uses_same_timing_assertions_as_live.m
+
+
+============================================================
+4. HIGH-LEVEL ARCHITECTURE
+============================================================
+
+
+Keep the validated core stable:
+
+
+rt/
+buffer/
+baseline/
+measure/
+sync/
+
+
+Add or refactor live layers:
+
+
+config/
+- nf_modes.m
+- nf_live_config.m
+- nf_mock_live_test_config.m
+- nf_finalize_config.m
+- nf_session_requires_spatial.m
+- nf_project_root.m
+- nf_check_config.m updates
+
+
+source/
+- Ben-compatible live FieldTrip adapter
+- live header read
+- CTF res4 parsing
+- live chunk reader
+- mock-live source
+
+
+spatial/
+- nf_prepare_live_combined_matrix.m
+- nf_revalidate_live_spatial_against_source.m
+- uniform CombinedMatrix contract for all live paths
+- precomputed matrix validation
+- technical fallback matrix generation
+
+
+feedback/
+- local_circle feedback mapping/display
+- Psychtoolbox display for live
+- optional debug plot only for mock/local testing
+
+
+io/
+- session folder
+- logger init/append/close
+- partial logs
+- online trace logging
+- channel check reports
+
+
+safety/
+- manual stop
+- long hard failsafe
+- stop-file support
+- clean shutdown
+
+
+main/
+- nf_wait_for_manual_start.m
+- nf_run_live_diagnostics.m
+- nf_run_live_channel_check.m
+- nf_run_live_chunk_smoke_test.m
+- nf_run_live_rt_dry_run.m
+- nf_run_live_resting.m
+- nf_run_live_trial.m
+- nf_run_live_self_test.m
+- nf_trial_success_criterion_met.m
+- nf_determine_stop_reason.m
+
+
+comm/
+- optional trigger layer only if needed
+- do not block first self-test on full trigger integration
+
+
+============================================================
+5. MODES AND CONFIG CONSTANTS
+============================================================
+
+
+Add:
+
+
+config/nf_modes.m
+
+
+Purpose:
+Centralize all mode strings.
+
+
+Content:
+
+
+function Modes = nf_modes()
+% NF_MODES Centralized mode names.
+
+
+Modes.Session.LiveDiagnostics = 'live_diagnostics';
+Modes.Session.LiveChannelCheck = 'live_channel_check';
+Modes.Session.LiveChunkSmokeTest = 'live_chunk_smoke_test';
+Modes.Session.LiveRTDryRun = 'live_rt_dry_run';
+Modes.Session.LiveSelfTest = 'live_self_test';
+Modes.Session.LiveResting = 'live_resting';
+Modes.Session.LiveTrial = 'live_trial';
+
+
+Modes.Source.SimulatedOnline = 'simulated_online';
+Modes.Source.SimulatedResting = 'simulated_resting';
+Modes.Source.SimulatedTrial = 'simulated_trial';
+Modes.Source.LiveFieldTrip = 'live_fieldtrip';
+Modes.Source.MockLiveBuffer = 'mock_live_buffer';
+
+
+Modes.LiveAdapter.BenFieldTrip = 'ben_fieldtrip_buffer';
+Modes.LiveAdapter.MockBuffer = 'mock_buffer';
+
+
+Modes.Filter.IIRSOS = 'iir_sos';
+
+
+Modes.Spatial.CombinedMatrix = 'combined_matrix';
+
+
+Modes.Spatial.MatrixSource.ComputeLive = 'compute_live';
+Modes.Spatial.MatrixSource.Precomputed = 'precomputed';
+Modes.Spatial.MatrixSource.TechnicalFallback = 'technical_fallback';
+Modes.Spatial.MatrixSource.TechnicalPlaceholder = 'technical_placeholder';
+
+
+Modes.Feedback.None = 'none';
+Modes.Feedback.DebugValue = 'debug_value';
+Modes.Feedback.LocalCircle = 'local_circle';
+Modes.Feedback.DebugPlot = 'debug_plot';
+Modes.Feedback.ExternalUDP = 'external_udp';
+Modes.Feedback.ExternalSerial = 'external_serial';
+Modes.Feedback.ExternalParallel = 'external_parallel';
+
+
+Modes.TrialStop.Manual = 'manual';
+Modes.TrialStop.ManualOrSuccess = 'manual_or_success';
+Modes.TrialStop.FixedDuration = 'fixed_duration';
+
+
+Modes.StopReason.Manual = 'manual';
+Modes.StopReason.Success = 'success';
+Modes.StopReason.HardFailsafe = 'hard_failsafe';
+Modes.StopReason.Error = 'error';
+Modes.StopReason.CompletedUnknown = 'completed_unknown';
+end
+
+
+Rules:
+- Use Modes constants for comparisons.
+- Do not compare against raw strings like 'compute_live' when a Modes constant exists.
+- The Step 3D live path should use Spatial.Mode = combined_matrix uniformly.
+
+
+============================================================
+6. LIVE CONFIG
+============================================================
+
+
+Add:
+
+
+config/nf_live_config.m
+
+
+Purpose:
+Build one live-session config for Step 3D.
+
+
+Content:
+
+
+function RTConfig = nf_live_config()
+Modes = nf_modes();
+RTConfig = nf_default_config();
+
+
+% ===== SESSION =====
+RTConfig.Session.Mode = Modes.Session.LiveSelfTest;
+
+
+% ===== SOURCE =====
+RTConfig.Source.Mode = Modes.Source.LiveFieldTrip;
+RTConfig.Source.LiveAdapter = Modes.LiveAdapter.BenFieldTrip;
+
+
+RTConfig.Source.FieldTrip.Host = '10.0.0.2';
+RTConfig.Source.FieldTrip.Port = 1972;
+RTConfig.Source.FieldTrip.TimeoutMs = 10000;
+RTConfig.Source.FieldTrip.UseBrainstormPluginPaths = true;
+RTConfig.Source.FieldTrip.Path = '';
+RTConfig.Source.FieldTrip.UseCTFRes4FromHeader = true;
+
+
+% Finalized conditionally in nf_finalize_config.
+RTConfig.Source.FieldTrip.RequireCTFRes4 = [];
+
+
+% ===== TIMING =====
+RTConfig.Fs = 2400;
+
+
+RTConfig.ChunkSeconds = 0.2;
+RTConfig.ChunkSamples = 480;
+
+
+RTConfig.PowerWindowSeconds = 2.0;
+RTConfig.PowerWindowSamples = 4800;
+
+
+RTConfig.BufferSeconds = 2.0;
+RTConfig.BufferSamples = 4800;
+
+
+% ===== PROCESSING =====
+RTConfig.Filter.Type = Modes.Filter.IIRSOS;
+
+
+% Uniform live spatial contract:
+% All Step 3D live paths produce Spatial.CombinedMatrix.
+RTConfig.Spatial.Mode = Modes.Spatial.CombinedMatrix;
+
+
+% Default intended path: precomputed matrix.
+% Acquisition-only sessions may use an empty path.
+% Spatial sessions must either provide a path or switch to TechnicalFallback.
+RTConfig.Spatial.MatrixSource = Modes.Spatial.MatrixSource.Precomputed;
+RTConfig.Spatial.CombinedMatrixPath = '';
+
+
+% Path 3 fallback settings.
+RTConfig.Spatial.Fallback.Type = 'single_channel';  % 'single_channel' or 'channel_average'
+RTConfig.Spatial.Fallback.ChannelIndex = 1;
+RTConfig.Spatial.Fallback.ChannelName = '';
+RTConfig.Spatial.Fallback.ChannelNames = {};
+RTConfig.Spatial.Fallback.NormalizeWeights = true;
+RTConfig.Spatial.Fallback.AllowIfNoIPSMatrix = true;
+
+
+% ===== CTF CORRECTION =====
+% Candidate Ben-compatible path pending Marc confirmation.
+RTConfig.Source.CTF.ApplyChannelGains = true;
+RTConfig.Source.CTF.ApplyMegRefCorrection = true;
+RTConfig.Source.CTF.RemoveBlockMean = true;
+RTConfig.Source.CTF.ApplyProjector = false;
+RTConfig.Source.CTF.RequireMarcConfirmation = true;
+RTConfig.Source.CTF.MarcConfirmed = false;
+
+
+RTConfig.Source.CTF.CorrectionOrder = { ...
+    'ChannelGains', ...
+    'MegRefCorrection', ...
+    'BlockMeanRemoval', ...
+    'ProjectorIfEnabled'};
+
+
+RTConfig.Debug.SaveFirstChunksForCorrectionValidation = 5;
+
+
+% ===== FEEDBACK =====
+RTConfig.Feedback.Mode = Modes.Feedback.LocalCircle;
+RTConfig.Feedback.MapSource = 'ZSmoothed';
+RTConfig.Feedback.UpdateEveryNValidMeasures = 1;
+
+
+RTConfig.Feedback.Circle.Color = [0 255 0];
+RTConfig.Feedback.Circle.BackgroundColor = [128 128 128];
+RTConfig.Feedback.Circle.OuterCircleColor = [0 255 0];
+RTConfig.Feedback.Circle.ZMin = -3;
+RTConfig.Feedback.Circle.ZMax = 3;
+RTConfig.Feedback.Circle.MinRadiusPx = 20;
+RTConfig.Feedback.Circle.MaxRadiusPx = 220;
+RTConfig.Feedback.Circle.UseAreaProportionalMapping = true;
+
+
+% ZSmoothed already provides temporal smoothing.
+% VisualAlpha = 1.0 avoids extra display lag in first self-test.
+RTConfig.Feedback.Circle.VisualAlpha = 1.0;
+
+
+RTConfig.Feedback.Circle.ShowOuterCircle = true;
+RTConfig.Feedback.Circle.ShowFixation = true;
+RTConfig.Feedback.Circle.InstructionText = ...
+    'Try to make the green disk as large as possible.';
+RTConfig.Feedback.Circle.HideMeaningFromParticipant = true;
+
+
+% Live display policy.
+RTConfig.Feedback.RequirePsychtoolboxForLive = true;
+RTConfig.Feedback.AllowDebugPlotFallback = false;
+
+
+% ===== DEBUG =====
+RTConfig.Debug.CheckMeasureSchema = true;
+RTConfig.Debug.CheckRTSchema = true;
+RTConfig.Debug.Verbose = true;
+RTConfig.Debug.AllowNonLiveTimingInMock = false;
+
+
+% ===== MOCK-LIVE =====
+RTConfig.MockLive.RandomSeed = 1;
+RTConfig.MockLive.UseDeterministicData = true;
+RTConfig.MockLive.FixturePath = '';
+
+
+% ===== PROTOCOL =====
+RTConfig.Protocol.RequireManualStart = true;
+RTConfig.Protocol.DurationSeconds.Resting = 180;
+
+
+RTConfig.Protocol.Trial.StopRule = Modes.TrialStop.ManualOrSuccess;
+RTConfig.Protocol.Trial.Success.Enabled = false;
+RTConfig.Protocol.Trial.Success.SourceField = 'ZSmoothed';
+RTConfig.Protocol.Trial.Success.Threshold = 1.0;
+RTConfig.Protocol.Trial.Success.RequiredConsecutiveValidUpdates = 20;
+
+
+% Single source of truth for trial hard failsafe.
+% This is not the intended endpoint.
+RTConfig.Protocol.Trial.MaxFailsafeSeconds = 30 * 60;
+
+
+% ===== LOGGING =====
+RTConfig.Logging.SaveProjectedFilteredTrace = true;
+RTConfig.Logging.SaveRawChunksLocal = false;
+RTConfig.Logging.FlushEveryNMeasures = 25;
+RTConfig.Logging.SaveFormat = 'matfile';
+RTConfig.Logging.StoreTracesAsSingle = true;
+
+
+% ===== LIVE DRY RUN =====
+RTConfig.LiveDryRun.TimeoutSecs = 5;
+RTConfig.LiveDryRun.ExpectedFs = 2400;
+RTConfig.LiveDryRun.RequireChannelLabels = true;
+RTConfig.LiveDryRun.RequireSamplingRateMatch = true;
+RTConfig.LiveDryRun.RunDuringConfigCheck = false;
+RTConfig.LiveDryRun.DurationSeconds = 30;
+
+
+% ===== SAFETY =====
+RTConfig.Safety.EnableKeyboardStop = true;
+RTConfig.Safety.StopKey = 'ESCAPE';
+RTConfig.Safety.SecondaryStopKey = 'q';
+RTConfig.Safety.EnableStopFile = true;
+RTConfig.Safety.UseMaxDurationFailsafe = true;
+RTConfig.Safety.MaxConsecutiveTimeouts = 3;
+
+
+% Do not define RTConfig.Safety.MaxDurationSeconds as independent field.
+
+
+% ===== COMM =====
+RTConfig.Comm.EnableTriggers = false;
+
+
+end
+
+
+============================================================
+7. FINALIZE CONFIG
+============================================================
+
+
+Add:
+
+
+config/nf_finalize_config.m
+
+
+Purpose:
+Resolve derived fields and validate once before realtime loops.
+
+
+Key behavior:
+
+
+function RTConfig = nf_finalize_config(RTConfig)
+
+
+Modes = nf_modes();
+
+
+RTConfig.Paths.ProjectRoot = nf_project_root();
+
+
+RTConfig.ChunkSamples = round(RTConfig.ChunkSeconds * RTConfig.Fs);
+RTConfig.PowerWindowSamples = round(RTConfig.PowerWindowSeconds * RTConfig.Fs);
+RTConfig.BufferSamples = round(RTConfig.BufferSeconds * RTConfig.Fs);
+
+
+isLiveTimingMode = ...
+    strcmp(RTConfig.Source.Mode, Modes.Source.LiveFieldTrip) || ...
+    strcmp(RTConfig.Source.Mode, Modes.Source.MockLiveBuffer);
+
+
+if isLiveTimingMode
+    if strcmp(RTConfig.Source.Mode, Modes.Source.MockLiveBuffer) && ...
+            isfield(RTConfig.Debug, 'AllowNonLiveTimingInMock') && ...
+            RTConfig.Debug.AllowNonLiveTimingInMock
+        % Explicit debug escape hatch.
+    else
+        assert(RTConfig.Fs == 2400, ...
+            'Live/mock-live Fs must be 2400 Hz.');
+
+
+        assert(RTConfig.ChunkSamples == 480, ...
+            '0.2-second chunks at 2400 Hz must be 480 samples.');
+
+
+        assert(RTConfig.PowerWindowSamples == 4800, ...
+            '2-second window at 2400 Hz must be 4800 samples.');
+
+
+        assert(RTConfig.BufferSamples >= RTConfig.PowerWindowSamples, ...
+            'BufferSamples must be at least PowerWindowSamples.');
+
+
+        assert(mod(RTConfig.PowerWindowSamples, RTConfig.ChunkSamples) == 0, ...
+            'PowerWindowSamples must be an integer multiple of ChunkSamples.');
+    end
+end
+
+
+% Session-scoped spatial validation.
+% Acquisition-only sessions can run before CombinedMatrixPath is known.
+% Spatial sessions require a valid matrix path if MatrixSource = Precomputed.
+requiresSpatial = nf_session_requires_spatial(RTConfig);
+
+
+% Spatial / CTF dependency.
+matrixSource = RTConfig.Spatial.MatrixSource;
+
+
+usesRealSpatialMatrix = ...
+    strcmp(matrixSource, Modes.Spatial.MatrixSource.Precomputed) || ...
+    strcmp(matrixSource, Modes.Spatial.MatrixSource.ComputeLive);
+
+
+usesTechnicalFallback = ...
+    strcmp(matrixSource, Modes.Spatial.MatrixSource.TechnicalFallback) || ...
+    strcmp(matrixSource, Modes.Spatial.MatrixSource.TechnicalPlaceholder);
+
+
+usesCTFCorrections = ...
+    RTConfig.Source.CTF.ApplyChannelGains || ...
+    RTConfig.Source.CTF.ApplyMegRefCorrection || ...
+    RTConfig.Source.CTF.ApplyProjector;
+
+
+% CTF res4 requirement:
+% 1. CTF-dependent corrections require CTF res4.
+% 2. Real spatial matrix paths require CTF res4 by default.
+% 3. Clean technical fallback does not require CTF res4.
+if isempty(RTConfig.Source.FieldTrip.RequireCTFRes4)
+    if usesCTFCorrections
+        RTConfig.Source.FieldTrip.RequireCTFRes4 = true;
+    elseif usesRealSpatialMatrix
+        RTConfig.Source.FieldTrip.RequireCTFRes4 = true;
+    elseif usesTechnicalFallback
+        RTConfig.Source.FieldTrip.RequireCTFRes4 = false;
+    else
+        RTConfig.Source.FieldTrip.RequireCTFRes4 = false;
+    end
+end
+
+
+if usesTechnicalFallback && usesCTFCorrections
+    warning(['Technical fallback is being used with CTF-dependent corrections enabled. ' ...
+             'This is allowed only if CTF res4 is available and the correction state is logged.']);
+end
+
+
+% If fallback is meant to avoid CTF metadata, CTF-dependent corrections must be disabled.
+if usesTechnicalFallback && ~RTConfig.Source.FieldTrip.RequireCTFRes4
+    assert(~RTConfig.Source.CTF.ApplyChannelGains, ...
+        'Technical fallback without CTF res4 cannot apply ChannelGains.');
+
+
+    assert(~RTConfig.Source.CTF.ApplyMegRefCorrection, ...
+        'Technical fallback without CTF res4 cannot apply MegRefCorrection.');
+
+
+    assert(~RTConfig.Source.CTF.ApplyProjector, ...
+        'Technical fallback without CTF res4 cannot apply projector.');
+end
+
+
+% CombinedMatrixPath validation is scoped to sessions that actually use spatial processing.
+if strcmp(matrixSource, Modes.Spatial.MatrixSource.Precomputed)
+    assert(isfield(RTConfig.Spatial, 'CombinedMatrixPath'), ...
+        'Spatial.CombinedMatrixPath field is required for precomputed matrix mode.');
+
+
+    if requiresSpatial
+        assert(~isempty(RTConfig.Spatial.CombinedMatrixPath), ...
+            ['Spatial.CombinedMatrixPath must be non-empty for sessions that require spatial processing. ' ...
+             'Set a precomputed matrix path or switch MatrixSource to TechnicalFallback.']);
+
+
+        assert(exist(RTConfig.Spatial.CombinedMatrixPath, 'file') == 2, ...
+            'Spatial.CombinedMatrixPath does not point to an existing file.');
+    end
+end
+
+
+% Trial failsafe single source of truth.
+if ~isfield(RTConfig.Protocol.Trial, 'MaxFailsafeSeconds') || ...
+        isempty(RTConfig.Protocol.Trial.MaxFailsafeSeconds)
+    RTConfig.Protocol.Trial.MaxFailsafeSeconds = 30 * 60;
+end
+
+
+assert(RTConfig.Protocol.Trial.MaxFailsafeSeconds >= 15 * 60, ...
+    'Trial hard failsafe must be at least 15 minutes.');
+
+
+if RTConfig.Protocol.Trial.MaxFailsafeSeconds > 30 * 60
+    warning('Trial hard failsafe is above 30 minutes. Confirm this is intentional.');
+end
+
+
+if isfield(RTConfig.Safety, 'MaxDurationSeconds') && ...
+        ~isempty(RTConfig.Safety.MaxDurationSeconds)
+    assert(RTConfig.Safety.MaxDurationSeconds == RTConfig.Protocol.Trial.MaxFailsafeSeconds, ...
+        ['Do not maintain divergent trial failsafe fields. ' ...
+         'Use Protocol.Trial.MaxFailsafeSeconds as source of truth.']);
+end
+
+
+RTConfig = nf_check_config(RTConfig);
+
+
+end
+
+
+Important:
+nf_check_config runs before acquisition/resting/trial starts, not every 0.2 seconds.
+
+
+------------------------------------------------------------
+config/nf_session_requires_spatial.m
+------------------------------------------------------------
+
+
+Purpose:
+Decide whether the current session actually needs a CombinedMatrix at config-validation time.
+
+
+Content:
+
+
+function tf = nf_session_requires_spatial(RTConfig)
+
+
+Modes = nf_modes();
+
+
+spatialSessions = { ...
+    Modes.Session.LiveRTDryRun, ...
+    Modes.Session.LiveResting, ...
+    Modes.Session.LiveTrial, ...
+    Modes.Session.LiveSelfTest};
+
+
+tf = isfield(RTConfig, 'Session') && ...
+     isfield(RTConfig.Session, 'Mode') && ...
+     any(strcmp(RTConfig.Session.Mode, spatialSessions));
+
+
+end
+
+
+Acquisition-only sessions that should not require CombinedMatrixPath:
+- live_diagnostics
+- live_channel_check
+- live_chunk_smoke_test
+
+
+Spatial sessions that should require a valid precomputed path when MatrixSource = Precomputed:
+- live_rt_dry_run
+- live_resting
+- live_trial
+- live_self_test
+
+
+============================================================
+8. PROJECT ROOT
+============================================================
+
+
+Add:
+
+
+config/nf_project_root.m
+
+
+Purpose:
+Cache the project root once.
+
+
+Content:
+
+
+function root = nf_project_root()
+persistent cachedRoot
+if isempty(cachedRoot)
+    thisFile = mfilename('fullpath');
+    configDir = fileparts(thisFile);
+    cachedRoot = fileparts(configDir);
+end
+root = cachedRoot;
+end
+
+
+All paths derive from RTConfig.Paths.ProjectRoot.
+
+
+============================================================
+9. CONFIG VALIDATION
+============================================================
+
+
+Update:
+
+
+config/nf_check_config.m
+
+
+Validate:
+- Source.Mode is allowed.
+- Source.LiveAdapter is allowed.
+- FieldTrip host/port/timeout exist for live_fieldtrip.
+- Fs = 2400 for live/mock-live.
+- ChunkSamples = 480 for live/mock-live.
+- PowerWindowSamples = 4800 for live/mock-live.
+- BufferSamples >= PowerWindowSamples.
+- Filter.Type = iir_sos for live self-test.
+- Spatial.Mode = combined_matrix for Step 3D live path.
+- Spatial.MatrixSource is allowed.
+- Spatial.CombinedMatrixPath field exists if MatrixSource = precomputed.
+- Spatial.CombinedMatrixPath is non-empty and valid only when nf_session_requires_spatial(RTConfig) is true.
+- Acquisition-only sessions can finalize with Precomputed + empty CombinedMatrixPath:
+  live_diagnostics
+  live_channel_check
+  live_chunk_smoke_test
+- Spatial sessions cannot proceed with Precomputed + empty CombinedMatrixPath:
+  live_rt_dry_run
+  live_resting
+  live_trial
+  live_self_test
+- Spatial.Fallback fields exist if MatrixSource = technical_fallback or technical_placeholder.
+- TechnicalFallback remains Spatial.Mode = combined_matrix.
+- TechnicalFallback without CTF corrections does not require CTF res4.
+- TechnicalFallback with CTF corrections does require CTF res4.
+- RequireCTFRes4 logic is consistent with matrix source and CTF correction flags.
+- Feedback.Mode includes local_circle.
+- Feedback.Circle fields exist.
+- Feedback.Circle.VisualAlpha = 1.0 by default for first live self-test.
+- Feedback.RequirePsychtoolboxForLive exists.
+- Feedback.AllowDebugPlotFallback exists.
+- Protocol.Trial.StopRule = manual_or_success by default.
+- Protocol.Trial.MaxFailsafeSeconds >= 15 * 60.
+- Safety.MaxDurationSeconds is absent or equals Protocol.Trial.MaxFailsafeSeconds.
+- MockLive is deterministic by default.
+- Logging fields exist.
+- Paths exist or can be created.
+- Config validation does not perform live acquisition unless RunDuringConfigCheck = true.
+
+
+============================================================
+10. SPATIAL MATRIX ARCHITECTURE
+============================================================
+
+
+Decision:
+For Step 3D, all live paths use the same downstream spatial contract.
+
+
+Always use:
+
+
+RTConfig.Spatial.Mode = Modes.Spatial.CombinedMatrix;
+
+
+The path is selected only by:
+
+
+RTConfig.Spatial.MatrixSource
+
+
+Allowed sources:
+- Modes.Spatial.MatrixSource.ComputeLive
+- Modes.Spatial.MatrixSource.Precomputed
+- Modes.Spatial.MatrixSource.TechnicalFallback
+- Modes.Spatial.MatrixSource.TechnicalPlaceholder
+
+
+Do not implement Path 3 by switching Spatial.Mode to single_channel or channel_average.
+Path 3 must still produce Spatial.CombinedMatrix.
+
+
+Reason:
+This keeps nf_rt_process_chunk untouched and avoids special-case live processing.
+
+
+------------------------------------------------------------
+Path 1 — ComputeLive
+------------------------------------------------------------
+
+
+Configuration:
+
+
+RTConfig.Spatial.Mode = Modes.Spatial.CombinedMatrix;
+RTConfig.Spatial.MatrixSource = Modes.Spatial.MatrixSource.ComputeLive;
+
+
+Meaning:
+Build true live IPS CombinedMatrix from live header/source model.
+
+
+Status:
+Not implemented in this Step 3D branch unless Marc/Brainstorm provides the real computation script.
+
+
+Behavior:
+If ComputeLive is requested and no real computation path exists, nf_prepare_live_combined_matrix must error clearly.
+
+
+Do not fake Path 1.
+
+
+------------------------------------------------------------
+Path 2 — Precomputed
+------------------------------------------------------------
+
+
+Configuration:
+
+
+RTConfig.Spatial.Mode = Modes.Spatial.CombinedMatrix;
+RTConfig.Spatial.MatrixSource = Modes.Spatial.MatrixSource.Precomputed;
+RTConfig.Spatial.CombinedMatrixPath = '<path>';
+
+
+Behavior:
+Load precomputed CombinedMatrix.
+Validate:
+- matrix exists
+- matrix has InputChannelNames
+- matrix has correction-state metadata
+- live channel order matches InputChannelNames
+- correction state matches
+- dimensions match corrected live chunk
+- matrix contains no NaN/Inf
+
+
+Log:
+Spatial.MatrixSource = 'precomputed'
+Spatial.IsTechnicalFallback = false
+Spatial.IsIPS = true or unknown depending on metadata
+
+
+Claim:
+live technical self-test using precomputed IPS projection, if metadata supports IPS.
+
+
+------------------------------------------------------------
+Path 3 — TechnicalFallback / TechnicalPlaceholder
+------------------------------------------------------------
+
+
+Configuration:
+
+
+RTConfig.Spatial.Mode = Modes.Spatial.CombinedMatrix;
+RTConfig.Spatial.MatrixSource = Modes.Spatial.MatrixSource.TechnicalFallback;
+
+
+or:
+
+
+RTConfig.Spatial.MatrixSource = Modes.Spatial.MatrixSource.TechnicalPlaceholder;
+
+
+Behavior:
+Build trivial CombinedMatrix at runtime.
+
+
+Single-channel fallback:
+CombinedMatrix = zeros(1, NChannels);
+CombinedMatrix(1, FallbackChannelIndex) = 1;
+
+
+Channel-average fallback:
+CombinedMatrix = zeros(1, NChannels);
+CombinedMatrix(1, selectedIndices) = 1 / numel(selectedIndices);
+
+
+Rules:
+- This is not IPS neurofeedback.
+- Log loudly that technical fallback was used.
+- It exists only to test acquisition → processing → display → logging.
+- It should not require CTF res4 if CTF-dependent correction flags are false.
+- If CTF-dependent correction flags are true, CTF res4 is required.
+
+
+Log:
+Spatial.MatrixSource = 'technical_fallback' or 'technical_placeholder'
+Spatial.IsIPS = false
+Spatial.IsTechnicalFallback = true
+Spatial.Messages includes:
+'Technical fallback matrix used; do not claim IPS neurofeedback.'
+
+
+------------------------------------------------------------
+nf_prepare_live_combined_matrix.m contract
+------------------------------------------------------------
+
+
+Add:
+
+
+spatial/nf_prepare_live_combined_matrix.m
+
+
+It must always return:
+
+
+Spatial.CombinedMatrix
+Spatial.InputChannelNames
+Spatial.OutputSignalNames
+Spatial.Hash
+Spatial.MatrixSource
+Spatial.ValidatedAgainstLiveHeader
+Spatial.CorrectionState
+Spatial.LiveHeaderHash
+Spatial.IsIPS
+Spatial.IsTechnicalFallback
+Spatial.Messages
+
+
+For all paths:
+- Output contract is identical.
+- Downstream code only sees Spatial.CombinedMatrix.
+- Downstream code does not care whether matrix is real/precomputed/fallback.
+
+
+For Path 3:
+Spatial.InputChannelNames = Source.ChannelNamesAfterCorrection;
+Spatial.LiveChannelNames = Source.ChannelNamesAfterCorrection;
+Spatial.CorrectionState = Source.CorrectionState;
+Spatial.IsIPS = false;
+Spatial.IsTechnicalFallback = true;
+Spatial.ValidatedAgainstLiveHeader = true;
+Spatial.Messages{end+1} = ...
+    'Technical fallback matrix used; do not claim IPS neurofeedback.';
+
+
+Validate:
+size(Spatial.CombinedMatrix, 2) == numel(Source.ChannelNamesAfterCorrection)
+
+
+Abort before resting/trial if:
+- Fs is not 2400 Hz.
+- live channel labels are missing.
+- CombinedMatrix is missing.
+- CombinedMatrix has NaN/Inf.
+- CombinedMatrix column count does not match live corrected channel count.
+- InputChannelNames do not match Source.ChannelNamesAfterCorrection.
+- correction state mismatch exists.
+- CTF res4 is missing while required.
+- ComputeLive requested but not implemented.
+- no honest matrix/fallback path is selected.
+
+
+------------------------------------------------------------
+spatial/nf_revalidate_live_spatial_against_source.m
+------------------------------------------------------------
+
+
+Purpose:
+Confirm that an already prepared Spatial object is still valid for a current live Source.
+
+
+This is used when nf_run_live_self_test prepares Spatial once and passes it to resting/trial.
+
+
+Signature:
+
+
+function Spatial = nf_revalidate_live_spatial_against_source(Spatial, Source, RTConfig)
+
+
+Checks:
+- Spatial.CombinedMatrix exists.
+- Spatial.Hash exists.
+- Spatial.ValidatedAgainstLiveHeader is true.
+- Source.Fs = 2400.
+- Source.ChannelNamesAfterCorrection matches Spatial.InputChannelNames.
+- size(Spatial.CombinedMatrix, 2) matches numel(Source.ChannelNamesAfterCorrection).
+- Spatial.CorrectionState matches Source.CorrectionState.
+- If Spatial.LiveHeaderHash exists and Source.HeaderHash exists, they match.
+- If mismatch, error before the phase begins.
+
+
+Important:
+Revalidation is cheap.
+It does not reload or rebuild the matrix.
+It only confirms the already-prepared matrix is still safe to use.
+
+
+Tests:
+- tests/test_live_spatial_rejects_channel_mismatch.m
+- tests/test_live_spatial_rejects_correction_state_mismatch.m
+- tests/test_live_spatial_dimensions_match_corrected_channels.m
+- tests/test_compute_live_matrix_source_errors_if_not_implemented.m
+- tests/test_path3_technical_fallback_does_not_require_ctf_res4.m
+- tests/test_path3_requires_ctf_res4_if_ctf_corrections_enabled.m
+- tests/test_path3_returns_combined_matrix_contract.m
+- tests/test_revalidate_live_spatial_against_source_rejects_mismatch.m
+- tests/test_path3_technical_fallback_matrix_uses_corrected_channel_count.m
+
+
+============================================================
+11. BEN-COMPATIBLE LIVE SOURCE
+============================================================
+
+
+Goal:
+Wrap Benjamin’s realtime FieldTrip/Brainstorm acquisition setup into Source.
+
+
+Do not copy Benjamin’s old neurofeedback algorithm.
+Copy only acquisition/buffer setup.
+
+
+Use:
+- FieldTrip/Brainstorm buffer host/port
+- buffer('get_hdr')
+- buffer('wait_dat')
+- buffer('get_dat')
+- hdr.fsample
+- hdr.nsamples
+- hdr.channel_names
+- hdr.ctf_res4
+- ChannelGains
+- MEG / MEG REF indices
+- MegRefCoef
+- sample cursor logic
+- acquisition block size detection
+
+
+Default host/port:
+RTConfig.Source.FieldTrip.Host = '10.0.0.2';
+RTConfig.Source.FieldTrip.Port = 1972;
+
+
+Treat these as historical defaults to confirm with Marc.
+
+
+------------------------------------------------------------
+source/nf_live_add_fieldtrip_paths.m
+------------------------------------------------------------
+
+
+Purpose:
+Add FieldTrip realtime buffer paths.
+
+
+Behavior:
+- Use Brainstorm plugin path if available.
+- Add realtime buffer path.
+- Add fileio path.
+- Verify buffer.m exists.
+- Fallback to RTConfig.Source.FieldTrip.Path if provided.
+- Fail clearly if buffer.m cannot be found.
+
+
+------------------------------------------------------------
+source/nf_live_read_header_fieldtrip.m
+------------------------------------------------------------
+
+
+Purpose:
+Read live header.
+
+
+Behavior:
+
+
+hdr = buffer('get_hdr', [], host, port);
+
+
+Output:
+Header.Fs
+Header.NSamples
+Header.NChannels
+Header.ChannelNames
+Header.RawHeader
+Header.HasCTFRes4
+
+
+Fail if no header.
+Fail if Fs ~= 2400 when sampling-rate match is required.
+
+
+------------------------------------------------------------
+source/nf_live_read_ctf_res4_header.m
+------------------------------------------------------------
+
+
+Purpose:
+Parse CTF res4 info when available.
+
+
+Extract:
+CTFInfo.ChannelGains
+CTFInfo.iMeg
+CTFInfo.iMegRef
+CTFInfo.iBufMeg
+CTFInfo.iBufMegRef
+CTFInfo.MegRefCoef
+CTFInfo.ChannelMat
+CTFInfo.Header
+CTFInfo.Messages
+
+
+If ctf_res4 is missing:
+- error if RequireCTFRes4 = true
+- warn if RequireCTFRes4 = false
+
+
+------------------------------------------------------------
+source/nf_live_detect_acq_block_size.m
+------------------------------------------------------------
+
+
+Purpose:
+Detect samples per acquisition block.
+
+
+Behavior:
+- read hdr.nsamples
+- wait for sample count to advance
+- return new_nsamples - old_nsamples
+
+
+This does not need to equal RTConfig.ChunkSamples.
+It is diagnostic metadata.
+
+
+------------------------------------------------------------
+source/nf_source_init_live_fieldtrip_ben.m
+------------------------------------------------------------
+
+
+Purpose:
+Initialize live Source struct.
+
+
+Source fields:
+Source.Mode
+Source.LiveAdapter
+Source.Host
+Source.Port
+Source.TimeoutMs
+Source.Header
+Source.HeaderHash
+Source.Fs
+Source.NChannels
+Source.ChannelNames
+Source.InitialSample
+Source.LastSampleRead
+Source.AcquisitionBlockSamples
+Source.ChannelGains
+Source.iMeg
+Source.iMegRef
+Source.MegRefCoef
+Source.CTFInfo
+Source.ChannelNamesAfterCorrection
+Source.CorrectionState
+Source.IsLive
+Source.LastError
+
+
+Flow:
+1. Add FieldTrip paths.
+2. Read live header.
+3. Confirm Fs = 2400.
+4. Set Source.LastSampleRead = hdr.nsamples.
+5. Parse CTF res4 if available/required.
+6. Detect acquisition block size.
+7. Print correction state.
+8. Return Source.
+
+
+Do not start processing here.
+
+
+------------------------------------------------------------
+source/nf_live_apply_ben_ctf_corrections.m
+------------------------------------------------------------
+
+
+Purpose:
+Apply candidate Ben-compatible CTF correction path if configured.
+
+
+Important:
+This path is not proven until Marc confirms it.
+It must be configurable and logged.
+
+
+Add comment:
+
+
+% Candidate correction order:
+% 1. ChannelGains correction
+% 2. MEG reference correction using MegRefCoef
+% 3. Block mean removal
+% 4. Optional projector, disabled by default
+%
+% This order must be confirmed with Marc before claiming it matches
+% Benjamin's live preprocessing.
+
+
+Behavior:
+If RequireMarcConfirmation = true and MarcConfirmed = false:
+- warning in MATLAB
+- add message to CorrectionInfo
+- add message to SessionLog/channel-check report
+
+
+Candidate operations:
+1. Apply ChannelGains if enabled.
+2. Apply MegRefCorrection if enabled:
+   Cmeg = X(Source.iMeg,:) - Source.MegRefCoef * X(Source.iMegRef,:);
+3. Remove block mean if enabled:
+   Cmeg = Cmeg - mean(Cmeg, 2);
+4. Apply projector if enabled and available.
+5. Return corrected channel matrix and channel names.
+
+
+Output:
+X
+CorrectionInfo.AppliedChannelGains
+CorrectionInfo.AppliedMegRefCorrection
+CorrectionInfo.RemovedBlockMean
+CorrectionInfo.AppliedProjector
+CorrectionInfo.InputNChannels
+CorrectionInfo.OutputNChannels
+CorrectionInfo.InputChannelNames
+CorrectionInfo.OutputChannelNames
+CorrectionInfo.RequiresMarcConfirmation
+CorrectionInfo.MarcConfirmed
+CorrectionInfo.CorrectionOrder
+CorrectionInfo.Messages
+
+
+------------------------------------------------------------
+source/nf_get_meg_chunk_live_fieldtrip_ben.m
+------------------------------------------------------------
+
+
+Purpose:
+Read next live chunk.
+
+
+Algorithm:
+
+
+startSample = Source.LastSampleRead + 1;
+stopSample = Source.LastSampleRead + RTConfig.ChunkSamples;
+
+
+hdr = buffer('wait_dat', [stopSample, 0, Source.TimeoutMs], Source.Host, Source.Port);
+
+
+if hdr.nsamples < stopSample
+    chunk = [];
+    Source.LastError = 'timeout_waiting_for_samples';
+    return;
+end
+
+
+dat = buffer('get_dat', Source.LastSampleRead - 1 + [1, RTConfig.ChunkSamples], Source.Host, Source.Port);
+
+
+Xraw = double(dat.buf);
+
+
+[X, CorrectionInfo] = nf_live_apply_ben_ctf_corrections(Xraw, Source, RTConfig);
+
+
+chunk.Data = X;
+chunk.SampleIndex = startSample;
+chunk.SampleIndices = startSample:stopSample;
+chunk.NSamples = size(X, 2);
+chunk.ChannelNames = Source.ChannelNamesAfterCorrection;
+chunk.Timestamp = GetSecs or now;
+chunk.SourceMode = Source.Mode;
+chunk.GapBeforeChunkFlag = false;
+chunk.CorrectionInfo = CorrectionInfo;
+chunk.ReadHeaderNSamples = hdr.nsamples;
+
+
+Source.LastSampleRead = stopSample;
+
+
+Critical Marc question:
+Confirm that buffer indexing should follow Benjamin’s expression:
+
+
+Source.LastSampleRead - 1 + [1, RTConfig.ChunkSamples]
+
+
+Do not simplify until tested in the MEG room.
+
+
+------------------------------------------------------------
+Modify source/nf_source_init.m
+------------------------------------------------------------
+
+
+Add:
+- live_fieldtrip + ben_fieldtrip_buffer branch
+- mock_live_buffer + mock_buffer branch
+
+
+Keep simulated branches unchanged.
+
+
+------------------------------------------------------------
+Modify source/nf_get_meg_chunk.m
+------------------------------------------------------------
+
+
+Add:
+- live_fieldtrip + ben_fieldtrip_buffer branch
+- mock_live_buffer + mock_buffer branch
+
+
+Keep simulated branches unchanged.
+
+
+============================================================
+12. MOCK-LIVE SOURCE
+============================================================
+
+
+Goal:
+Test live orchestration without MEG-room hardware.
+
+
+Add:
+- source/nf_source_init_mock_live_buffer.m
+- source/nf_get_meg_chunk_mock_live_buffer.m
+- config/nf_mock_live_test_config.m
+- tests/test_mock_live_full_path.m
+
+
+Mock source behavior:
+- behaves like live source
+- returns same chunk struct
+- Fs = 2400
+- ChunkSamples = 480
+- PowerWindowSamples = 4800
+- BufferSamples = 4800
+- deterministic by default
+- no external user-specific files required
+
+
+Preferred data:
+Generate deterministic synthetic fixture with fixed seed in test/helper.
+
+
+Required fields:
+Data.X
+Data.Fs = 2400
+Data.ChannelNames
+Data.Description
+Data.TargetBand
+Data.CreatedBy
+
+
+Default:
+RTConfig.MockLive.RandomSeed = 1;
+RTConfig.MockLive.UseDeterministicData = true;
+
+
+------------------------------------------------------------
+config/nf_mock_live_test_config.m
+------------------------------------------------------------
+
+
+Purpose:
+Provide a safe mock-live config for hardware-free testing.
+
+
+Content:
+
+
+function RTConfig = nf_mock_live_test_config()
+Modes = nf_modes();
+RTConfig = nf_live_config();
+
+
+RTConfig.Source.Mode = Modes.Source.MockLiveBuffer;
+RTConfig.Source.LiveAdapter = Modes.LiveAdapter.MockBuffer;
+
+
+RTConfig.Feedback.AllowDebugPlotFallback = true;
+RTConfig.Feedback.RequirePsychtoolboxForLive = false;
+
+
+RTConfig.Spatial.Mode = Modes.Spatial.CombinedMatrix;
+RTConfig.Spatial.MatrixSource = Modes.Spatial.MatrixSource.TechnicalFallback;
+
+
+RTConfig.Source.CTF.ApplyChannelGains = false;
+RTConfig.Source.CTF.ApplyMegRefCorrection = false;
+RTConfig.Source.CTF.ApplyProjector = false;
+RTConfig.Source.FieldTrip.RequireCTFRes4 = false;
+
+
+RTConfig = nf_finalize_config(RTConfig);
+end
+
+
+Tests:
+- tests/test_mock_live_full_path.m
+- tests/test_mock_live_is_deterministic.m
+- tests/test_mock_live_fixture_is_self_contained.m
+- tests/test_mock_live_test_config_allows_debug_plot.m
+
+
+============================================================
+13. FEEDBACK DISPLAY
+============================================================
+
+
+Goal:
+Display simple Shibata/Watanabe-style green disk.
+
+
+Participant instruction:
+Try to make the green disk as large as possible.
+
+
+Do not show:
+- z-scores
+- theta labels
+- numbers
+- raw power
+- strategy instructions
+
+
+------------------------------------------------------------
+feedback/nf_feedback_circle_radius.m
+------------------------------------------------------------
+
+
+Input:
+Measure
+RTConfig
+
+
+Use:
+Measure.ZSmoothed
+
+
+Mapping:
+zClamped = min(max(z, ZMin), ZMax)
+u = (zClamped - ZMin) / (ZMax - ZMin)
+
+
+If area-proportional:
+radius = MinRadius + sqrt(u) * (MaxRadius - MinRadius)
+
+
+Else:
+radius = MinRadius + u * (MaxRadius - MinRadius)
+
+
+Output:
+Circle.ZDisplay
+Circle.NormalizedFeedback
+Circle.TargetRadiusPx
+Circle.OuterRadiusPx
+
+
+------------------------------------------------------------
+feedback/nf_feedback_map_to_display.m
+------------------------------------------------------------
+
+
+Add local_circle case.
+
+
+Behavior:
+- compute circle radius
+- set FeedbackValue
+- set FeedbackTargetRadiusPx
+- set FeedbackOuterRadiusPx
+- set FeedbackDisplayType = 'circle'
+
+
+Do not draw in this function.
+
+
+------------------------------------------------------------
+measure/nf_measure_empty.m
+------------------------------------------------------------
+
+
+Add fields:
+Measure.FeedbackTargetRadiusPx = NaN;
+Measure.FeedbackDisplayRadiusPx = NaN;
+Measure.FeedbackOuterRadiusPx = NaN;
+Measure.FeedbackDisplayType = '';
+Measure.FeedbackDisplayTime = NaN;
+
+
+------------------------------------------------------------
+feedback/nf_feedback_init.m
+------------------------------------------------------------
+
+
+For live_fieldtrip:
+- Psychtoolbox required by default.
+- If Psychtoolbox fails, abort unless explicitly overridden.
+
+
+For mock_live_buffer/local testing:
+- debug_plot fallback allowed only if RTConfig.Feedback.AllowDebugPlotFallback = true.
+
+
+Config:
+RTConfig.Feedback.RequirePsychtoolboxForLive = true;
+RTConfig.Feedback.AllowDebugPlotFallback = false;
+
+
+------------------------------------------------------------
+feedback/nf_feedback_update.m
+------------------------------------------------------------
+
+
+Draw:
+- gray background
+- outer green circle
+- solid green disk
+- optional fixation
+
+
+VisualAlpha:
+For first Step 3D:
+
+
+RTConfig.Feedback.Circle.VisualAlpha = 1.0
+
+
+So:
+FeedbackDisplayRadiusPx = FeedbackTargetRadiusPx
+
+
+No extra display smoothing beyond ZSmoothed.
+
+
+------------------------------------------------------------
+feedback/nf_feedback_close.m
+------------------------------------------------------------
+
+
+Always close safely:
+- close screen
+- restore cursor
+- reset priority
+- return safely if never initialized
+
+
+============================================================
+14. TRIAL STOPPING
+============================================================
+
+
+Trial should not stop after 3–5 minutes.
+
+
+Normal endpoints:
+1. manual stop
+2. explicit success criterion
+3. error/timeout
+4. long hard failsafe
+
+
+Source of truth:
+RTConfig.Protocol.Trial.MaxFailsafeSeconds = 30 * 60;
+
+
+Do not maintain independent:
+RTConfig.Safety.MaxDurationSeconds
+
+
+For first Step 3D:
+RTConfig.Protocol.Trial.Success.Enabled = false;
+normal endpoint = manual stop.
+
+
+------------------------------------------------------------
+main/nf_trial_success_criterion_met.m
+------------------------------------------------------------
+
+
+For first self-test:
+return false.
+
+
+Later:
+return true after configured sustained feedback success.
+
+
+------------------------------------------------------------
+main/nf_determine_stop_reason.m
+------------------------------------------------------------
+
+
+Signature:
+
+
+function StopReason = nf_determine_stop_reason(manualStop, successCriterionMet, hardFailsafeExceeded, errorOccurred)
+
+
+Priority:
+1. error
+2. success
+3. manual
+4. hard_failsafe
+5. completed_unknown
+
+
+Use Modes.StopReason constants.
+
+
+============================================================
+15. SAFETY
+============================================================
+
+
+Add:
+- safety/nf_safety_init_stop_flag.m
+- safety/nf_safety_check_stop.m
+- safety/nf_safety_hard_failsafe_exceeded.m
+- safety/nf_safety_shutdown.m
+
+
+Important:
+Use only this signature:
+
+
+Safety = nf_safety_init_stop_flag(RTConfig, phase)
+
+
+Do not support an alternate maxDurationSeconds signature.
+
+
+Allowed phase strings:
+- 'resting'
+- 'trial'
+- 'trial_like_dry_run'
+- 'live_chunk_smoke_test'
+- 'live_rt_dry_run'
+
+
+Behavior:
+
+
+For resting:
+Safety.MaxDurationSeconds = RTConfig.Protocol.DurationSeconds.Resting;
+
+
+For trial:
+Safety.MaxDurationSeconds = RTConfig.Protocol.Trial.MaxFailsafeSeconds;
+
+
+For dry runs:
+Safety.MaxDurationSeconds = RTConfig.LiveDryRun.DurationSeconds;
+
+
+For other phases:
+Safety.MaxDurationSeconds = Inf;
+
+
+Keyboard stop:
+Use ESC and q.
+
+
+Psychtoolbox:
+Use KbCheck inside loop because PTB may capture keyboard input.
+
+
+Stop check should run:
+- before each chunk
+- after each chunk
+- after each feedback update
+
+
+============================================================
+16. MANUAL START
+============================================================
+
+
+Add:
+
+
+main/nf_wait_for_manual_start.m
+
+
+Purpose:
+Wait before resting/trial begins.
+
+
+Signature:
+
+
+function nf_wait_for_manual_start(Session, RTConfig)
+
+
+Behavior:
+- print phase
+- print source mode
+- print Fs
+- print chunk size
+- print power window
+- print feedback mode
+- print stop rule
+- print hard failsafe duration for trial
+- wait for ENTER or SPACE
+- use KbWait if Psychtoolbox active
+- use input('Press ENTER to start...') as fallback
+- debounce accidental key press if needed
+
+
+Psychtoolbox debounce:
+- call KbReleaseWait or KbWait([], 2) before accepting the start key
+- wait for all keys to be released
+- then wait for ENTER or SPACE
+- this prevents accidental immediate start from a held key
+
+
+Example message:
+
+
+Ready to start LIVE TRIAL.
+Feedback: local_circle
+Sampling: 2400 Hz
+Chunk: 480 samples / 0.2 s
+Power window: 4800 samples / 2.0 s
+Stop rule: manual_or_success
+Hard failsafe: 30 minutes
+Press ENTER/SPACE to start.
+
+
+============================================================
+17. LOGGING AND AUDIT
+============================================================
+
+
+Add:
+- io/nf_make_session_output_dir.m
+- io/nf_logger_init.m
+- io/nf_logger_append_chunk_meta.m
+- io/nf_logger_append_measure.m
+- io/nf_save_partial_log.m
+- io/nf_logger_close.m
+
+
+Output folder:
+
+
+outputs/live/YYYYMMDD_HHMMSS_live_self_test/
+    config/
+    source/
+    baseline/
+    trial/
+    logs/
+    traces/
+    reports/
+    debug_chunks/
+
+
+Logger should save:
+- RTConfig
+- Source header
+- channel names
+- chunk metadata
+- Measure log
+- online traces
+- baseline
+- trial summary
+- stop reason
+- session audit
+- partial logs on crash
+
+
+Chunk metadata:
+RunID
+Phase
+ChunkIndex
+StartSample
+StopSample
+NSamples
+NChannels
+ReadStartTime
+ReadEndTime
+ProcessingStartTime
+ProcessingEndTime
+DroppedChunkFlag
+GapBeforeChunkFlag
+TimeoutFlag
+CorrectionInfo
+RuntimeSecs
+
+
+Measure log:
+Power
+PowerPerSignal
+ZRaw
+ZClipped
+ZSmoothed
+FeedbackValue
+FeedbackTargetRadiusPx
+FeedbackDisplayRadiusPx
+FeedbackOuterRadiusPx
+FeedbackDisplayTime
+SampleIndex
+WindowStartSample
+WindowEndSample
+IsValid
+InvalidReason
+SourceMode
+ConfigHash
+BaselineConfigHash
+
+
+Online traces:
+ProjectedTrace
+FilteredTrace
+PowerTrace
+ZTrace
+FeedbackTrace
+
+
+Raw data:
+Full raw MEG should normally be owned by Brainstorm/acquisition recording.
+MATLAB should log sample ranges and RawRecordingRef.
+Local raw chunks are off by default.
+
+
+Correction validation:
+Save first 5 raw/corrected chunks if enabled.
+
+
+Partial baseline:
+Partial = true
+Finalized = false
+not loadable as Baseline
+
+
+nf_load_baseline.m must reject:
+- Baseline.Partial = true
+- missing Finalized
+- Finalized = false
+
+
+============================================================
+18. LIVE DIAGNOSTICS AND DRY RUNS
+============================================================
+
+
+------------------------------------------------------------
+main/nf_run_live_diagnostics.m
+------------------------------------------------------------
+
+
+Purpose:
+Quick MEG-room troubleshooting.
+
+
+Print:
+- host/port
+- Fs and expected Fs
+- nsamples every second for 10 seconds
+- channel count
+- first/last channel labels
+- CTF res4 availability
+- ChannelGains availability
+- MegRefCoef availability
+- acquisition block size
+- correction state
+- correction order
+- MarcConfirmed
+
+
+Optional:
+plot 1–2 seconds of raw/corrected selected channel.
+
+
+Do not start resting/trial.
+
+
+Important:
+This is acquisition-only.
+It should not require a non-empty CombinedMatrixPath.
+
+
+------------------------------------------------------------
+main/nf_run_live_channel_check.m
+------------------------------------------------------------
+
+
+Purpose:
+First formal MEG-room channel/header check.
+
+
+Save:
+- live_channel_check.mat
+- live_channel_check.txt
+- live_channel_names.csv
+
+
+Report:
+Host
+Port
+Fs
+Expected Fs
+NChannels
+Initial nsamples
+Second nsamples
+Sample count advanced
+Acquisition block samples
+CTF res4 available
+Channel gains available
+MegRefCoef available
+Correction state
+Channel mapping status
+PASS/FAIL
+Recommendation
+
+
+Important:
+This is acquisition-only.
+It should not require a non-empty CombinedMatrixPath.
+
+
+------------------------------------------------------------
+main/nf_run_live_chunk_smoke_test.m
+------------------------------------------------------------
+
+
+Purpose:
+Read repeated chunks without RT/filter/feedback.
+
+
+Config:
+NChunks = 50
+
+
+Expected:
+- chunk.NSamples = 480
+- continuous sample indices
+- stable channel count
+- no timeout
+- metadata saved
+
+
+Important:
+This is acquisition-only.
+It should not require a non-empty CombinedMatrixPath.
+
+
+------------------------------------------------------------
+main/nf_run_live_rt_dry_run.m
+------------------------------------------------------------
+
+
+Purpose:
+Send live chunks through nf_rt_process_chunk with feedback disabled.
+
+
+Expected:
+- IIR/SOS state updates
+- buffer fills
+- valid Measures appear after warmup
+- 4800-sample window used
+- FeedbackValue remains NaN before feedback mapping
+- timing acceptable
+
+
+Important:
+This uses the RT core.
+It does require a valid precomputed CombinedMatrixPath or explicit TechnicalFallback.
+
+
+============================================================
+19. LIVE RESTING AND TRIAL
+============================================================
+
+
+Both live phase functions must support two modes:
+
+
+1. Standalone mode:
+   If no Prepared.Spatial is provided, the function prepares Spatial itself.
+
+
+2. Full self-test mode:
+   If Prepared.Spatial is provided, the function revalidates it against the current Source and reuses it.
+   It must not reload/rebuild the matrix.
+
+
+------------------------------------------------------------
+main/nf_run_live_resting.m
+------------------------------------------------------------
+
+
+Signature:
+
+
+RestingResult = nf_run_live_resting(RTConfig, Prepared)
+
+
+If nargin < 2:
+Prepared = struct();
+
+
+Flow:
+1. RTConfig.Session.Mode = Modes.Session.LiveResting
+2. RTConfig.Feedback.Mode = Modes.Feedback.None
+3. finalize config
+4. prepare Source
+5. if Prepared.Spatial exists:
+      Spatial = nf_revalidate_live_spatial_against_source(Prepared.Spatial, Source, RTConfig)
+   else:
+      Spatial = nf_prepare_live_combined_matrix(Source, RTConfig)
+6. prepare RT
+7. initialize BaselineAcc
+8. initialize Logger
+9. initialize Safety with phase = 'resting'
+10. wait for manual start
+11. loop until resting target complete or stopped
+12. read chunk
+13. process chunk
+14. update BaselineAcc with valid Measure.Power
+15. log chunk and Measure
+16. finalize Baseline
+17. quality check Baseline
+18. save finalized Baseline
+19. close logger
+
+
+Crash:
+save partial baseline.
+
+
+------------------------------------------------------------
+main/nf_run_live_trial.m
+------------------------------------------------------------
+
+
+Signature:
+
+
+TrialResult = nf_run_live_trial(RTConfig, Prepared)
+
+
+If nargin < 2:
+Prepared = struct();
+
+
+Flow:
+1. RTConfig.Session.Mode = Modes.Session.LiveTrial
+2. RTConfig.Feedback.Mode = Modes.Feedback.LocalCircle
+3. finalize config
+4. load finalized Baseline
+5. reject partial/unfinalized baseline
+6. prepare Source
+7. if Prepared.Spatial exists:
+      Spatial = nf_revalidate_live_spatial_against_source(Prepared.Spatial, Source, RTConfig)
+   else:
+      Spatial = nf_prepare_live_combined_matrix(Source, RTConfig)
+8. prepare RT with Baseline
+9. initialize Feedback
+10. initialize Logger
+11. initialize Safety with phase = 'trial'
+12. wait for manual start
+13. loop until manualStop / success / hard failsafe
+14. read chunk
+15. process chunk
+16. map valid Measure.ZSmoothed to display
+17. update feedback
+18. log chunk and Measure
+19. determine stop reason
+20. save trial log
+21. close logger
+22. close feedback
+
+
+Loop condition:
+
+
+while ~manualStop && ~successCriterionMet && ~hardFailsafeExceeded
+
+
+Stop reason:
+Use nf_determine_stop_reason.
+
+
+Crash:
+save partial trial log with StopReason = error.
+
+
+============================================================
+20. MAIN ENTRY SCRIPT
+============================================================
+
+
+Add:
+
+
+main/nf_run_live_self_test.m
+
+
+Flow:
+
+
+function Results = nf_run_live_self_test()
+
+
+startup;
+Modes = nf_modes();
+
+
+RTConfig = nf_live_config();
+RTConfig.Session.Mode = Modes.Session.LiveSelfTest;
+RTConfig = nf_finalize_config(RTConfig);
+
+
+DryRun = nf_source_dry_run(RTConfig);
+if ~DryRun.Pass
+    error('Live dry run failed.');
+end
+
+
+if DryRun.Fs ~= 2400
+    error('Live Fs mismatch: expected 2400 Hz.');
+end
+
+
+Source = nf_source_init(Modes.Source.LiveFieldTrip, [], RTConfig);
+Spatial = nf_prepare_live_combined_matrix(Source, RTConfig);
+
+
+if strcmp(RTConfig.Spatial.MatrixSource, Modes.Spatial.MatrixSource.ComputeLive) && ~Spatial.PreparedLive
+    error('Live-computed CombinedMatrix requested but not implemented/prepared.');
+end
+
+
+if ~Spatial.ValidatedAgainstLiveHeader
+    error('Spatial matrix was not validated against live header.');
+end
+
+
+Prepared = struct();
+Prepared.Spatial = Spatial;
+Prepared.SpatialHash = Spatial.Hash;
+Prepared.LiveHeaderHash = Spatial.LiveHeaderHash;
+Prepared.CreatedAt = now;
+
+
+RTConfig.Session.Mode = Modes.Session.LiveResting;
+RTConfig.Feedback.Mode = Modes.Feedback.None;
+RestingResult = nf_run_live_resting(RTConfig, Prepared);
+
+
+Baseline = RestingResult.Baseline;
+if ~Baseline.Quality.Pass
+    error('Live baseline failed quality check.');
+end
+
+
+RTConfig.Session.Mode = Modes.Session.LiveTrial;
+RTConfig.Feedback.Mode = Modes.Feedback.LocalCircle;
+RTConfig.Baseline.Path = RestingResult.BaselineFile;
+
+
+TrialResult = nf_run_live_trial(RTConfig, Prepared);
+
+
+Results = struct();
+Results.DryRun = DryRun;
+Results.Spatial = Spatial;
+Results.Resting = RestingResult;
+Results.Trial = TrialResult;
+Results.Pass = TrialResult.Completed && Baseline.Quality.Pass;
+
+
+end
+
+
+Rationale:
+- nf_run_live_self_test prepares Spatial once.
+- Resting and trial reuse the same Prepared.Spatial.
+- Each phase still revalidates Spatial against its Source/header.
+- Standalone resting/trial still work when Prepared is absent.
+
+
+============================================================
+21. TESTS
+============================================================
+
+
+Config:
+- test_live_config_defaults.m
+- test_modes_constants.m
+- test_live_timing_defaults.m
+- test_mock_live_uses_same_timing_assertions_as_live.m
+- test_trial_failsafe_single_source_of_truth.m
+- test_require_ctf_res4_logic_by_matrix_source.m
+- test_acquisition_only_sessions_do_not_require_combined_matrix_path.m
+- test_spatial_sessions_require_precomputed_path_if_precomputed.m
+
+
+Core order:
+- test_live_core_order_preserved.m
+- test_feedback_stays_outside_rt_core_live.m
+
+
+Feedback:
+- test_circle_feedback_mapping.m
+- test_feedback_map_local_circle.m
+- test_feedback_visual_alpha_one_no_extra_smoothing.m
+- test_live_requires_psychtoolbox_unless_override.m
+- test_mock_live_allows_debug_plot_fallback.m
+
+
+Logger:
+- test_logger_init_and_append.m
+- test_partial_log_rejected_as_baseline.m
+
+
+Safety/stopping:
+- test_trial_manual_or_success_stop_rule.m
+- test_trial_failsafe_is_long.m
+- test_success_criterion_can_end_trial.m
+- test_determine_stop_reason.m
+- test_safety_init_uses_phase_signature_only.m
+
+
+Mock-live:
+- test_mock_live_full_path.m
+- test_mock_live_is_deterministic.m
+- test_mock_live_fixture_is_self_contained.m
+- test_mock_live_test_config_allows_debug_plot.m
+
+
+Live adapter without MEG:
+- test_live_source_missing_buffer_errors_cleanly.m
+- test_get_meg_chunk_live_requires_header.m
+
+
+Spatial:
+- test_live_spatial_rejects_channel_mismatch.m
+- test_live_spatial_rejects_correction_state_mismatch.m
+- test_live_spatial_dimensions_match_corrected_channels.m
+- test_compute_live_matrix_source_errors_if_not_implemented.m
+- test_path3_technical_fallback_does_not_require_ctf_res4.m
+- test_path3_requires_ctf_res4_if_ctf_corrections_enabled.m
+- test_path3_returns_combined_matrix_contract.m
+- test_self_test_reuses_prepared_spatial.m
+- test_revalidate_live_spatial_against_source_rejects_mismatch.m
+- test_path3_technical_fallback_matrix_uses_corrected_channel_count.m
+
+
+MEG-room manual:
+- test_live_diagnostics_in_meg_room
+- test_live_channel_check_in_meg_room
+- test_live_chunk_smoke_test_in_meg_room
+- test_live_rt_dry_run_in_meg_room
+- test_live_self_test_in_meg_room
+
+
+============================================================
+22. IMPLEMENTATION ORDER
+============================================================
+
+
+1. Create branch:
+   feature/step3-live-feedback-selftest
+
+
+2. Add nf_modes.m.
+
+
+3. Add nf_project_root.m.
+
+
+4. Add nf_live_config.m.
+
+
+5. Add nf_finalize_config.m.
+
+
+6. Add nf_session_requires_spatial.m.
+
+
+7. Update nf_check_config.m.
+
+
+8. Add Measure feedback fields.
+
+
+9. Add feedback mapping:
+   nf_feedback_circle_radius.m
+   update nf_feedback_map_to_display.m
+
+
+10. Add feedback display:
+    nf_feedback_init.m
+    nf_feedback_update.m
+    nf_feedback_close.m
+
+
+11. Add logging:
+    nf_make_session_output_dir.m
+    nf_logger_init.m
+    nf_logger_append_chunk_meta.m
+    nf_logger_append_measure.m
+    nf_save_partial_log.m
+    nf_logger_close.m
+
+
+12. Add safety:
+    nf_safety_init_stop_flag.m
+    nf_safety_check_stop.m
+    nf_safety_hard_failsafe_exceeded.m
+    nf_safety_shutdown.m
+
+
+13. Add manual start:
+    nf_wait_for_manual_start.m
+
+
+14. Add stop helpers:
+    nf_trial_success_criterion_met.m
+    nf_determine_stop_reason.m
+
+
+15. Add mock-live config:
+    nf_mock_live_test_config.m
+
+
+16. Add mock-live source:
+    nf_source_init_mock_live_buffer.m
+    nf_get_meg_chunk_mock_live_buffer.m
+
+
+17. Add shared live orchestration:
+    nf_prepare_rt_session.m
+    nf_run_processing_loop.m
+
+
+18. Preserve existing simulated/offline behavior.
+    Keep nf_run_resting.m and nf_run_trial.m mostly unchanged if possible.
+    Add separate nf_run_live_resting.m and nf_run_live_trial.m for the live path.
+    If editing existing functions, do not break simulated_resting, simulated_trial, or simulated_online tests.
+
+
+19. Add Ben live source:
+    nf_live_add_fieldtrip_paths.m
+    nf_live_read_header_fieldtrip.m
+    nf_live_read_ctf_res4_header.m
+    nf_live_detect_acq_block_size.m
+    nf_source_init_live_fieldtrip_ben.m
+    nf_live_apply_ben_ctf_corrections.m
+    nf_get_meg_chunk_live_fieldtrip_ben.m
+
+
+20. Update:
+    nf_source_init.m
+    nf_get_meg_chunk.m
+
+
+21. Add spatial:
+    nf_prepare_live_combined_matrix.m
+    nf_revalidate_live_spatial_against_source.m
+    update nf_validate_channel_mapping.m
+    update nf_validate_spatial_dimensions.m
+
+
+22. Add diagnostics/dry runs:
+    nf_source_dry_run.m
+    nf_save_live_channel_check.m
+    nf_run_live_diagnostics.m
+    nf_run_live_channel_check.m
+    nf_run_live_chunk_smoke_test.m
+    nf_run_live_rt_dry_run.m
+
+
+23. Add live entry scripts:
+    nf_run_live_resting.m
+    nf_run_live_trial.m
+    nf_run_live_self_test.m
+
+
+24. Add tests.
+
+
+25. Run all tests.
+
+
+26. Before MEG room:
+    run mock-live full path
+    run fake ZSmoothed feedback display
+    inspect logs
+    confirm partial baselines are rejected
+    confirm stop reasons are saved
+    confirm technical fallback returns CombinedMatrix contract
+    confirm acquisition-only sessions do not require CombinedMatrixPath
+    confirm spatial sessions require CombinedMatrixPath or TechnicalFallback
+    confirm self-test reuses Prepared.Spatial
+
+
+27. In MEG room:
+    run nf_run_live_diagnostics
+    run nf_run_live_channel_check
+    confirm host/port
+    confirm buffer indexing
+    confirm Fs = 2400
+    confirm channel labels/order
+    confirm sample count advances
+    confirm acquisition block size
+    confirm CTF res4 availability
+    confirm CTF correction order with Marc
+    confirm whether precomputed CombinedMatrix exists
+
+
+28. Run:
+    nf_run_live_chunk_smoke_test
+
+
+29. Run:
+    nf_run_live_rt_dry_run
+
+
+30. Run:
+    nf_run_live_self_test
+
+
+============================================================
+23. QUESTIONS FOR MARC
+============================================================
+
+
+FieldTrip/acquisition:
+- Is the FieldTrip buffer still at 10.0.0.2:1972?
+- Should we use buffer('get_hdr'), buffer('wait_dat'), and buffer('get_dat') directly?
+- Does get_dat indexing still match Benjamin’s expression?
+- Is hdr.fsample exactly 2400 Hz?
+- Are hdr.channel_names in the same order as the data matrix?
+- Is hdr.ctf_res4 available?
+- Are MEG REF channels available?
+
+
+Timing:
+- Is reading 480-sample chunks every 0.2 seconds appropriate?
+- Is 2 seconds / 4800 samples appropriate for feedback power?
+- What is the acquisition block size?
+- Can MATLAB read 480-sample chunks if acquisition block size differs?
+
+
+Corrections:
+- Were ChannelGains applied live?
+- Was MegRefCoef correction applied live?
+- Were corrections applied before FieldTrip buffer, in MATLAB, or offline?
+- What was Benjamin’s actual correction order?
+- Should block-mean removal be applied per chunk?
+- Should projector correction be enabled for first self-test?
+
+
+Spatial:
+- Is a real left IPS scout/inverse kernel ready?
+- Is there a precomputed CombinedMatrix?
+- What channel order was used to build it?
+- Were CTF corrections included in that matrix?
+- If no matrix is ready, is technical fallback acceptable for first self-test?
+
+
+Saving:
+- Is Brainstorm already recording full raw data?
+- Should MATLAB save local raw chunks or only sample ranges/traces?
+- What Brainstorm subject/run name should be logged?
+
+
+Display/triggers:
+- Should feedback be local Psychtoolbox only?
+- Are triggers needed for first self-test?
+- Is UPPT001 still relevant?
+- Is the parallel port address still hex2dec('2000')?
+- Who controls acquisition start/stop?
+
+
+Trial stopping:
+- Is manual stop acceptable as normal endpoint?
+- Is 30-minute hard failsafe acceptable?
+- Should later trials stop after sustained successful feedback?
+
+
+============================================================
+24. WHAT NOT TO DO
+============================================================
+
+
+Do not rewrite rt/nf_rt_process_chunk.m.
+Do not replace IIR/SOS for first live delivery.
+Do not change spatial → filter → buffer → power → z-score → feedback order.
+Do not move feedback drawing inside nf_rt_process_chunk.
+Do not assign FeedbackValue inside nf_rt_process_chunk.
+Do not bypass CombinedMatrix in the Step 3D live path.
+Do not implement Path 3 by switching to a special single-channel RT path.
+Do not let technical fallback accidentally require CTF res4 unless CTF correction flags require it.
+Do not require CombinedMatrixPath for acquisition-only sessions.
+Do not block live_diagnostics, live_channel_check, or live_chunk_smoke_test just because the matrix path is empty.
+Do not prepare/load the same Spatial matrix three times during nf_run_live_self_test.
+Do not rebuild Spatial inside resting/trial when Prepared.Spatial was already provided.
+Do not silently fall back from Psychtoolbox to MATLAB plot in live MEG unless explicitly overridden.
+Do not let mock-live tests require Psychtoolbox.
+Do not claim IPS theta neurofeedback if using technical fallback.
+Do not call Ben correction path proven until Marc confirms it.
+Do not save huge raw chunks every loop with repeated save().
+Do not hide channel mismatches as warnings.
+Do not load partial/unfinalized baselines.
+Do not allow invalid/gap/dropped windows into baseline.
+Do not show z-scores or theta labels to participant.
+Do not add display smoothing by default on top of ZSmoothed.
+Do not use 3–5 minute trial caps.
+Do not maintain duplicate trial-failsafe fields.
+Do not compare against raw strings when nf_modes constants exist.
+Do not pretend ComputeLive matrix path is implemented unless it actually is.
+Do not support ambiguous safety signatures.
+Do not delete validation/ or analysis/ yet.
+
+
+============================================================
+25. FINAL DELIVERABLE
+============================================================
+
+
+The Step 3D branch is successful when:
+
+
+nf_run_live_self_test
+
+
+can run in the MEG room and produce:
+
+
+- live FieldTrip/Brainstorm channel check
+- Fs = 2400 Hz confirmation
+- 480-sample chunk reads
+- 2-second / 4800-sample power window
+- uniform CombinedMatrix spatial contract
+- precomputed IPS matrix or honest technical fallback
+- live resting baseline
+- finalized Baseline
+- live trial
+- manual/success-based stopping
+- optional 15–30 minute hard failsafe only
+- IIR/SOS theta extraction
+- ZRaw / ZClipped / ZSmoothed
+- green disk feedback driven by ZSmoothed
+- complete Measure logging
+- online trace logging
+- session audit logging
+- partial saving on crash
+- clean display shutdown
+- preserved core algorithm order
