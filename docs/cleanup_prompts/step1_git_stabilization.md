@@ -64,9 +64,11 @@ Report:
 - git diff --cached --shortstat
 - git ls-files --eol   (summarize the LF/CRLF mix)
 - All untracked files grouped by top-level folder.
-Historical expectation only (re-measure; do not assume): ~199 changed files before EOL filtering, ~33
-substantively changed tracked files, ~94 untracked. Report the ACTUAL current counts. Do not assume every
-whitespace difference is CRLF noise — confirm it with --ignore-cr-at-eol and git ls-files --eol.
+Expectation only (re-measure; do not assume): on Windows git this tree shows roughly ~34 substantively
+modified tracked files plus ~94 untracked files, and little or no line-ending noise. (A Linux/sandbox git
+without core.autocrlf may instead report ~199 "modified" purely from CRLF differences — that is a tooling
+artifact, not real change.) Report the ACTUAL current counts. Confirm the EOL situation with
+--ignore-cr-at-eol and git ls-files --eol rather than assuming.
 Create a durable read-only recovery record OUTSIDE outputs/ and logs/ capturing: the tracked diff, the
 staged diff (if any), and the full untracked-file inventory. Do not modify or remove any WIP.
 [CONFIRM]
