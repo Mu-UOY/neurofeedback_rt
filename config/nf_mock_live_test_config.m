@@ -13,6 +13,7 @@ RTConfig.Source.LiveAdapter = Modes.LiveAdapter.MockBuffer;
 
 RTConfig.Feedback.AllowDebugPlotFallback = true;
 RTConfig.Feedback.RequirePsychtoolboxForLive = false;
+RTConfig.Feedback.Backend = Modes.FeedbackBackend.DebugPlot;
 
 RTConfig.Spatial.Mode = Modes.Spatial.CombinedMatrix;
 RTConfig.Spatial.MatrixSource = Modes.Spatial.MatrixSource.TechnicalFallback;

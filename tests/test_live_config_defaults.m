@@ -21,5 +21,13 @@ assert(strcmp(RTConfig.Spatial.MatrixSource, Modes.Spatial.MatrixSource.Precompu
 assert(RTConfig.Protocol.Trial.MaxFailsafeSeconds == 30 * 60);
 assert(isempty(RTConfig.Source.FieldTrip.RequireCTFRes4));
 assert(RTConfig.Feedback.Circle.VisualAlpha == 1.0);
+assert(RTConfig.Feedback.Circle.DebugAxesMarginScale == 1.1);
+assert(RTConfig.Feedback.Circle.FixationMinHalfWidthPx == 3);
+assert(RTConfig.Feedback.Circle.FixationHalfWidthFraction == 0.025);
+assert(RTConfig.Feedback.Circle.OuterCircleLineWidthPx == 2);
+assert(RTConfig.Feedback.Circle.FixationLineWidthPx == 1);
+assert(RTConfig.Feedback.LatencySummary.Percentile == 95);
+assert(isempty(RTConfig.DevelopmentSession.TestHooks.SafetyShutdownFcn));
+assert(isempty(RTConfig.DevelopmentSession.TestHooks.PauseFcn));
 
 end

@@ -15,6 +15,9 @@ for iFolder = 1:numel(folders)
         if strcmp(files(iFile).name, thisFile)
             continue;
         end
+        if strcmp(files(iFile).name, 'nf_live_config.m')
+            continue;
+        end
         filePath = fullfile(files(iFile).folder, files(iFile).name);
         text = fileread(filePath);
         for iTarget = 1:numel(targets)

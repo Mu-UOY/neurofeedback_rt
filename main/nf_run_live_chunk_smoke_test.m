@@ -58,11 +58,26 @@ for iChunk = 1:NChunks
 
     readStartTime = local_now_text();
     tRead = tic;
-    [chunk, Source] = nf_get_meg_chunk(Source, RTConfig);
+    try
+        [chunk, Source] = nf_get_meg_chunk(Source, RTConfig);
+        readError = [];
+    catch ME
+        chunk = [];
+        readError = ME;
+    end
     readRuntimeSecs = toc(tRead);
     readEndTime = local_now_text();
 
-    if isempty(chunk)
+    if ~isempty(readError)
+        Result.NInvalidChunks = Result.NInvalidChunks + 1;
+        row = local_source_error_row(Result.RunID, iChunk, RTConfig, expectedNChannels, ...
+            Source, readStartTime, readEndTime, readRuntimeSecs, readError);
+        metadataRows(end+1) = row; %#ok<AGROW>
+        Result.Messages{end+1} = sprintf('Chunk %d source read error: %s', ...
+            iChunk, readError.message);
+        Result.StopReason = 'source_read_error';
+        break;
+    elseif isempty(chunk)
         Result.NTimeouts = Result.NTimeouts + 1;
         metadataRows(end+1) = local_timeout_row(Result.RunID, iChunk, RTConfig, ... %#ok<AGROW>
             expectedNChannels, Source, readStartTime, readEndTime, readRuntimeSecs);
@@ -238,6 +253,29 @@ row.SourceMode = local_field(Source, 'Mode', '');
 row.ReadStartTime = readStartTime;
 row.ReadEndTime = readEndTime;
 row.ReadRuntimeSecs = readRuntimeSecs;
+end
+
+function row = local_source_error_row(runID, iChunk, RTConfig, expectedNChannels, Source, readStartTime, readEndTime, readRuntimeSecs, ME)
+% Build metadata for a low-level source read error.
+row = local_empty_metadata_row();
+row.RunID = runID;
+row.ChunkIndex = iChunk;
+row.InvalidChunkFlag = true;
+row.InvalidReason = 'source_read_error';
+row.ExpectedNSamples = RTConfig.ChunkSamples;
+row.ExpectedNChannels = expectedNChannels;
+row.SourceMode = local_field(Source, 'Mode', '');
+row.ReadStartTime = readStartTime;
+row.ReadEndTime = readEndTime;
+row.ReadRuntimeSecs = readRuntimeSecs;
+messageLower = lower(ME.message);
+if contains(messageLower, 'samples')
+    row.InvalidReason = 'source_read_error;chunk_size';
+elseif contains(messageLower, 'channel')
+    row.InvalidReason = 'source_read_error;channel_count';
+elseif contains(messageLower, 'sample_indices') || contains(messageLower, 'sample')
+    row.InvalidReason = 'source_read_error;cross_chunk_sample_gap';
+end
 end
 
 function [row, messages, previousLastSample, expectedNChannels] = local_validate_chunk( ...
@@ -445,6 +483,8 @@ elseif Result.NInvalidChunks > 0 && ~Result.ChannelCountStablePass
 elseif Result.NInvalidChunks > 0 && ~Result.ChunkSizePass
     message = sprintf('Live chunk smoke test failed: expected %d samples but at least one chunk had a different size.', ...
         RTConfig.ChunkSamples);
+elseif strcmp(Result.StopReason, 'source_read_error')
+    message = 'Live chunk smoke test failed: source read error.';
 elseif ~fsPass
     message = 'Live chunk smoke test failed: Fs did not match 2400 Hz.';
 elseif ~allChunksRead

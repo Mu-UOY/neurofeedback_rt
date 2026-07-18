@@ -29,6 +29,7 @@ end
 % This is an explicit local override and still uses hidden figures.
 RTConfig.Feedback.RequirePsychtoolboxForLive = false;
 RTConfig.Feedback.AllowDebugPlotFallback = true;
+RTConfig.Feedback.Backend = Modes.FeedbackBackend.DebugPlot;
 if isfield(RTConfig, 'Analysis') && isfield(RTConfig.Analysis, 'DisplayMode')
     RTConfig.Analysis.DisplayMode = 'off';
 end
