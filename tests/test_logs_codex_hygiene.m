@@ -17,7 +17,7 @@ generatorPath = fullfile(folder, 'build_code_summary.py');
 generatorText = fileread(generatorPath);
 assert(contains(generatorText, 'MATLAB_PATTERN = "*.m"'));
 assert(contains(generatorText, ...
-    'EXCLUDED_TOP_LEVEL_DIRECTORIES = {".git", "logs", "outputs"}'));
+    'EXCLUDED_TOP_LEVEL_DIRECTORIES = {".git", "dev-archive", "logs", "outputs"}'));
 assert(contains(generatorText, '"--check"'));
 assert(contains(generatorText, '"--check-file"'));
 
@@ -26,6 +26,7 @@ headers = regexp(summaryText, '(?m)^FILE: ([^\r\n]+)$', 'tokens');
 assert(~isempty(headers), 'The generated code summary has no MATLAB file entries.');
 headers = cellfun(@(token) token{1}, headers, 'UniformOutput', false);
 assert(~any(startsWith(headers, '.git/')));
+assert(~any(startsWith(headers, 'dev-archive/')));
 assert(~any(startsWith(headers, 'logs/')));
 assert(~any(startsWith(headers, 'outputs/')));
 
