@@ -1290,21 +1290,6 @@ if ~isnumeric(value) || ~isscalar(value) || ~isfinite(value) || value <= 0
 end
 end
 
-function local_check_scalar_string(value, label)
-% Validate scalar text values while allowing char and string.
-if ~(ischar(value) || (isstring(value) && isscalar(value)))
-    error('%s must be char or scalar string.', label);
-end
-end
-
-function local_check_optional_text(value, label)
-% Validate optional text fields used for editable live paths/settings.
-if isempty(value)
-    return;
-end
-local_check_scalar_string(value, label);
-end
-
 function local_check_nonempty_text(value, label)
 % Validate required live connection text fields.
 local_check_scalar_string(value, label);
